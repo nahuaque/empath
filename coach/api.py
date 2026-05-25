@@ -368,6 +368,40 @@ class ChatSessionStore:
             data = self._dump_state()
         await self._state_backend.save(data)
 
+    async def explanation_evidence(
+        self,
+        scope: ChatScope,
+        *,
+        message_index: int,
+        trace: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Fetch graph-backed explanation evidence when the backend supports it."""
+
+        provider = getattr(self._state_backend, "explanation_evidence", None)
+        if provider is None:
+            return None
+        return await provider(
+            user_id=scope.user_id,
+            workspace_id=scope.workspace_id,
+            conversation_id=scope.conversation_id,
+            message_index=message_index,
+            trace=trace,
+        )
+
+    async def compaction_summary(
+        self,
+        scope: WorkspaceScope,
+    ) -> dict[str, Any] | None:
+        """Fetch projected database compaction policy when the backend supports it."""
+
+        provider = getattr(self._state_backend, "compaction_summary", None)
+        if provider is None:
+            return None
+        return await provider(
+            user_id=scope.user_id,
+            workspace_id=scope.workspace_id,
+        )
+
     async def _ensure_loaded_locked(self) -> None:
         if self._loaded:
             return
@@ -643,6 +677,19 @@ def create_app(
             graph = workspace_scope.workspace.memory.snapshot()
         return JSONResponse(graph.model_dump())
 
+    async def formulation_compaction(request: Request) -> JSONResponse:
+        try:
+            params = _query_workspace_scope(request)
+        except ValueError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=422)
+        workspace_scope = await store.get_workspace(**params)
+        await store.save()
+        summary = await store.compaction_summary(workspace_scope)
+        if summary is None:
+            async with workspace_scope.workspace.lock:  # type: ignore[arg-type]
+                summary = _fallback_compaction_summary(workspace_scope)
+        return JSONResponse(summary)
+
     async def formulation_feedback(request: Request) -> JSONResponse:
         try:
             payload = FormulationFeedbackRequest.model_validate(await request.json())
@@ -795,7 +842,12 @@ def create_app(
                 return JSONResponse({"detail": "No trace stored for this message."}, status_code=404)
             explanation = scope.conversation.explanations.get(message_index)
             if explanation is None:
-                explanation = explain_trace_human_readable(trace)
+                evidence = await store.explanation_evidence(
+                    scope,
+                    message_index=message_index,
+                    trace=trace,
+                )
+                explanation = explain_trace_human_readable(trace, evidence=evidence)
                 scope.conversation.explanations[message_index] = explanation
                 message.explanation = explanation
 
@@ -973,6 +1025,7 @@ def create_app(
             Route("/api/chat", chat_json, methods=["POST"]),
             Route("/api/chat/stream", chat_stream, methods=["GET"]),
             Route("/api/formulation", formulation, methods=["GET"]),
+            Route("/api/formulation/compaction", formulation_compaction, methods=["GET"]),
             Route("/api/formulation/mirror", formulation_mirror, methods=["GET"]),
             Route("/api/formulation/feedback", formulation_feedback, methods=["POST"]),
             Route("/api/experiments", experiments, methods=["GET"]),
@@ -1317,6 +1370,66 @@ def _trace_scope(scope: ChatScope) -> dict[str, str]:
     }
 
 
+def _fallback_compaction_summary(scope: WorkspaceScope) -> dict[str, Any]:
+    graph = scope.workspace.memory.snapshot(
+        include_archived=True,
+        include_rejected=True,
+        include_removed=True,
+    )
+    active_nodes = [
+        node
+        for node in graph.nodes
+        if node.status not in {"archived", "rejected", "removed"}
+    ]
+    hidden_nodes = [
+        node
+        for node in graph.nodes
+        if node.status in {"archived", "rejected", "removed"}
+    ]
+    return {
+        "policy_version": "memory-fallback",
+        "policy_source": "case_memory_snapshot",
+        "workspace_key": f"{scope.user_id}/{scope.workspace_id}",
+        "user_id": scope.user_id,
+        "workspace_id": scope.workspace_id,
+        "turn_count": graph.turn_count,
+        "active_node_limit": scope.workspace.memory.active_node_limit,
+        "active_edge_limit": scope.workspace.memory.active_edge_limit,
+        "archive_after_turns": scope.workspace.memory.archive_after_turns,
+        "node_count": len(graph.nodes),
+        "edge_count": len(graph.edges),
+        "active_node_count": len(active_nodes),
+        "hidden_node_count": len(hidden_nodes),
+        "archived_node_count": graph.archived_node_count,
+        "rejected_node_count": sum(1 for node in graph.nodes if node.status == "rejected"),
+        "removed_node_count": sum(1 for node in graph.nodes if node.status == "removed"),
+        "active_edge_count": sum(
+            1 for edge in graph.edges if edge.status not in {"archived", "rejected", "removed"}
+        ),
+        "hidden_edge_count": sum(
+            1 for edge in graph.edges if edge.status in {"archived", "rejected", "removed"}
+        ),
+        "active_examples": [
+            {
+                "node_id": node.id,
+                "kind": node.kind,
+                "label": node.label,
+                "status": node.status,
+            }
+            for node in active_nodes[:12]
+        ],
+        "hidden_examples": [
+            {
+                "node_id": node.id,
+                "kind": node.kind,
+                "label": node.label,
+                "status": node.status,
+            }
+            for node in hidden_nodes[:12]
+        ],
+    }
+
+
 def _resolve_scope_id(value: str | None, default: str) -> str:
     cleaned = str(value or "").strip()
     return cleaned or default
@@ -1353,7 +1466,90 @@ def _query_scope_id(
     return cleaned
 
 
-def explain_trace_human_readable(trace: dict[str, Any]) -> str:
+def _format_graph_evidence(evidence: dict[str, Any] | None) -> list[str]:
+    if not evidence:
+        return []
+
+    lines = [
+        "Graph evidence: the Surreal working map found concrete records behind this rationale."
+    ]
+
+    messages = [
+        item
+        for item in evidence.get("messages") or ()
+        if isinstance(item, dict)
+    ]
+    if messages:
+        lines.append("Relevant transcript records:")
+        for item in messages[-3:]:
+            role = _human_label(str(item.get("role") or "message"))
+            index = item.get("message_index")
+            text = _compact_preview(str(item.get("text") or ""), limit=180)
+            if text:
+                lines.append(f"- Message {index} ({role}): {text}")
+
+    nodes = [
+        item
+        for item in evidence.get("supporting_nodes") or ()
+        if isinstance(item, dict)
+    ]
+    if nodes:
+        labels = []
+        for item in nodes[:8]:
+            kind = _human_label(str(item.get("kind") or "node"))
+            label = _human_label(str(item.get("label") or item.get("node_id") or "item"))
+            seen = item.get("seen_count")
+            seen_text = f", seen {seen}x" if seen else ""
+            labels.append(f"{label} ({kind}{seen_text})")
+        lines.append("Working-map support: " + "; ".join(labels) + ".")
+
+    edges = [
+        item
+        for item in evidence.get("support_edges") or ()
+        if isinstance(item, dict)
+    ]
+    if edges:
+        lines.append("Support paths in the map:")
+        for item in edges[:5]:
+            source = _human_label(str(item.get("source_label") or item.get("source_node_id") or "source"))
+            target = _human_label(str(item.get("target_label") or item.get("target_node_id") or "target"))
+            kind = _human_label(str(item.get("kind") or "supports"))
+            lines.append(f"- {source} -> {kind} -> {target}")
+
+    provenance = [
+        item
+        for item in evidence.get("provenance") or ()
+        if isinstance(item, dict)
+    ]
+    if provenance:
+        examples = []
+        for item in provenance[:4]:
+            field = _human_label(str(item.get("field") or "field"))
+            raw_evidence = _compact_preview(str(item.get("evidence") or ""), limit=90)
+            if raw_evidence:
+                examples.append(f"{field}: {raw_evidence}")
+        if examples:
+            lines.append("Provenance examples: " + "; ".join(examples) + ".")
+
+    experiments = [
+        item
+        for item in evidence.get("experiments") or ()
+        if isinstance(item, dict)
+    ]
+    if experiments:
+        experiment = experiments[0]
+        try_step = _compact_preview(str(experiment.get("try_step") or ""), limit=160)
+        if try_step:
+            lines.append(f"The proposed experiment was recorded as: {try_step}")
+
+    return lines
+
+
+def explain_trace_human_readable(
+    trace: dict[str, Any],
+    *,
+    evidence: dict[str, Any] | None = None,
+) -> str:
     """Translate a stored deterministic trace into readable intervention rationale."""
 
     extraction = trace.get("extraction") or {}
@@ -1377,6 +1573,9 @@ def explain_trace_human_readable(trace: dict[str, Any]) -> str:
     observations = _observation_summary(extraction)
     if observations:
         lines.append(f"It noticed {observations}.")
+
+    if evidence_lines := _format_graph_evidence(evidence):
+        lines.extend(evidence_lines)
 
     if hypotheses:
         grouped = _group_hypotheses(hypotheses)

@@ -132,6 +132,9 @@ class CaseMemory:
 
         return {
             "turn_count": self.turn_count,
+            "active_node_limit": self.active_node_limit,
+            "active_edge_limit": self.active_edge_limit,
+            "archive_after_turns": self.archive_after_turns,
             "nodes": [
                 node.model_dump()
                 for node in self.snapshot(
@@ -155,6 +158,18 @@ class CaseMemory:
         """Restore a snapshot produced by export_state."""
 
         self.turn_count = int(data.get("turn_count") or 0)
+        self.active_node_limit = max(
+            1,
+            int(data.get("active_node_limit") or self.active_node_limit),
+        )
+        self.active_edge_limit = max(
+            0,
+            int(data.get("active_edge_limit") or self.active_edge_limit),
+        )
+        self.archive_after_turns = max(
+            2,
+            int(data.get("archive_after_turns") or self.archive_after_turns),
+        )
         self._nodes = {
             node.id: node
             for node in (

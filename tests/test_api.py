@@ -5,10 +5,12 @@ from tempfile import TemporaryDirectory
 from typing import Any
 import unittest
 
+import anyio
 from starlette.testclient import TestClient
 
 from coach.api import ChatMessage, _local_conversation_context, create_app as create_coach_app
 from coach.chat import DeterministicKernelGuidedCoach
+from coach.storage import SurrealStateBackend
 
 
 def create_app(*args: Any, **kwargs: Any):
@@ -202,6 +204,49 @@ class ApiSurfaceTests(unittest.TestCase):
         self.assertIn("mind reading", explanation.json()["explanation"])
         self.assertIn("not a diagnosis", explanation.json()["explanation"])
         self.assertIn("explanation", after[1])
+
+    def test_trace_explanation_uses_surreal_graph_evidence_when_available(self):
+        backend = SurrealStateBackend(
+            url="mem://",
+            namespace="coach_api_test",
+            database="evidence",
+            record_id="app_state:explain",
+        )
+        app = create_app(
+            coach_factory=DeterministicKernelGuidedCoach,
+            dry_run=True,
+            state_backend=backend,
+        )
+        client = TestClient(app)
+        try:
+            chat = client.post(
+                "/api/chat",
+                json={
+                    "workspace_id": "graph-explain",
+                    "conversation_id": "alpha",
+                    "message": "They will think I am incompetent.",
+                },
+            )
+            explanation = client.get(
+                "/api/chat/explain",
+                params={
+                    "workspace_id": "graph-explain",
+                    "conversation_id": "alpha",
+                    "message_index": 2,
+                },
+            )
+        finally:
+            anyio.run(backend.close)
+
+        self.assertEqual(200, chat.status_code)
+        self.assertEqual(200, explanation.status_code)
+        text = explanation.json()["explanation"]
+        self.assertIn("Graph evidence", text)
+        self.assertIn("Surreal working map", text)
+        self.assertIn("Relevant transcript records", text)
+        self.assertIn("They will think I am incompetent", text)
+        self.assertIn("Working-map support", text)
+        self.assertIn("Support paths", text)
 
     def test_trace_explanation_requires_assistant_message(self):
         app = create_app(
@@ -870,6 +915,43 @@ class ApiSurfaceTests(unittest.TestCase):
         self.assertIn("identity", labels_by_kind["domain"])
         self.assertIn("aims_at", edge_kinds)
         self.assertIn("blocks_or_complicates", edge_kinds)
+
+    def test_formulation_compaction_endpoint_returns_database_policy(self):
+        backend = SurrealStateBackend(
+            url="mem://",
+            namespace="coach_api_test",
+            database="compaction",
+            record_id="app_state:compaction",
+        )
+        app = create_app(
+            coach_factory=DeterministicKernelGuidedCoach,
+            dry_run=True,
+            state_backend=backend,
+        )
+        client = TestClient(app)
+        try:
+            client.post(
+                "/api/chat",
+                json={
+                    "workspace_id": "compaction-workspace",
+                    "conversation_id": "alpha",
+                    "message": "I'm sad today.",
+                },
+            )
+            response = client.get(
+                "/api/formulation/compaction",
+                params={"workspace_id": "compaction-workspace"},
+            )
+        finally:
+            anyio.run(backend.close)
+
+        self.assertEqual(200, response.status_code)
+        payload = response.json()
+        self.assertEqual("db-compaction-v1", payload["policy_version"])
+        self.assertEqual("default/compaction-workspace", payload["workspace_key"])
+        self.assertGreater(payload["active_node_count"], 0)
+        self.assertIn("active_examples", payload)
+        self.assertIn("hidden_examples", payload)
 
     def test_multi_turn_patterns_show_in_working_map_and_trace(self):
         app = create_app(

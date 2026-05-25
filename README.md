@@ -168,10 +168,14 @@ projects queryable records into:
 - `working_node_provenance`
 - `working_edge_provenance`
 - `coaching_experiment`
+- `working_compaction_policy`
 
 The projection is rebuilt on each snapshot save, so query results stay aligned
 with the current workspace state while the Python snapshot remains the source
-of truth for app restoration.
+of truth for app restoration. `working_node` and `working_edge` records include
+database-visible compaction fields such as `active_in_map`,
+`hidden_by_policy`, `protected_by_policy`, `compaction_reason`,
+`retention_action`, `age`, and `priority_score`.
 
 API surface:
 
@@ -182,6 +186,7 @@ API surface:
 - `POST /api/chat`: one-shot JSON chat turn
 - `GET /api/chat/stream?session_id=...&message=...&trace=1`: SSE chat turn
 - `GET /api/formulation?session_id=...`: current working formulation graph
+- `GET /api/formulation/compaction?workspace_id=...`: database compaction policy summary
 - `GET /api/formulation/mirror?session_id=...`: reflective playback of the working formulation
 - `POST /api/formulation/feedback`: confirm, reject, or remove a formulation node
 - `GET /api/experiments?session_id=...`: proposed coaching experiments and outcomes
