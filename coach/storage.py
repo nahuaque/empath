@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
+import hashlib
 import importlib
 import json
 from pathlib import Path
@@ -114,6 +115,7 @@ class SurrealStateBackend:
                 await db.upsert(self.record_id, {"payload": snapshot})
             else:  # pragma: no cover - compatibility for older SDKs
                 await db.update(self.record_id, {"payload": snapshot})
+            await _project_snapshot(db, snapshot, app_record=self.record_id)
 
     async def close(self) -> None:
         """Close the underlying SDK connection if one was opened."""
@@ -227,6 +229,399 @@ def _record_payload(record: Any) -> dict[str, Any] | None:
         return None
     payload = record.get("payload")
     return payload if isinstance(payload, dict) else None
+
+
+_PROJECTION_TABLES = (
+    "coach_user",
+    "coach_workspace",
+    "coach_conversation",
+    "coach_message",
+    "working_node",
+    "working_edge",
+    "working_node_provenance",
+    "working_edge_provenance",
+    "coaching_experiment",
+)
+
+
+async def _project_snapshot(
+    db: Any,
+    snapshot: Mapping[str, Any],
+    *,
+    app_record: str,
+) -> None:
+    """Project the snapshot into queryable SurrealDB records."""
+
+    await _clear_projection(db, app_record=app_record)
+    users = snapshot.get("users")
+    if not isinstance(users, Mapping):
+        return
+
+    for user_id, workspaces in users.items():
+        user_id = str(user_id)
+        if not isinstance(workspaces, Mapping):
+            continue
+        await db.upsert(
+            _projection_record_id("coach_user", app_record, user_id),
+            {
+                "app_record": app_record,
+                "user_id": user_id,
+                "workspace_count": len(workspaces),
+            },
+        )
+        for workspace_id, workspace in workspaces.items():
+            if not isinstance(workspace, Mapping):
+                continue
+            await _project_workspace(
+                db,
+                app_record=app_record,
+                user_id=user_id,
+                workspace_id=str(workspace_id),
+                workspace=workspace,
+            )
+
+
+async def _clear_projection(db: Any, *, app_record: str) -> None:
+    for table in _PROJECTION_TABLES:
+        await db.query(
+            f"DELETE {table} WHERE app_record = $app_record",
+            {"app_record": app_record},
+        )
+
+
+async def _project_workspace(
+    db: Any,
+    *,
+    app_record: str,
+    user_id: str,
+    workspace_id: str,
+    workspace: Mapping[str, Any],
+) -> None:
+    workspace_key = _workspace_key(user_id, workspace_id)
+    memory = workspace.get("memory") if isinstance(workspace.get("memory"), Mapping) else {}
+    conversations = (
+        workspace.get("conversations") if isinstance(workspace.get("conversations"), Mapping) else {}
+    )
+    experiments = workspace.get("experiments") if isinstance(workspace.get("experiments"), list) else []
+    nodes = memory.get("nodes") if isinstance(memory, Mapping) and isinstance(memory.get("nodes"), list) else []
+    edges = memory.get("edges") if isinstance(memory, Mapping) and isinstance(memory.get("edges"), list) else []
+
+    await db.upsert(
+        _projection_record_id("coach_workspace", app_record, workspace_key),
+        {
+            "app_record": app_record,
+            "workspace_key": workspace_key,
+            "user_id": user_id,
+            "workspace_id": workspace_id,
+            "activity_counter": _int_or_zero(workspace.get("activity_counter")),
+            "turn_count": _int_or_zero(memory.get("turn_count") if isinstance(memory, Mapping) else None),
+            "conversation_count": len(conversations),
+            "working_node_count": len(nodes),
+            "working_edge_count": len(edges),
+            "experiment_count": len(experiments),
+        },
+    )
+
+    for conversation_id, conversation in conversations.items():
+        if isinstance(conversation, Mapping):
+            await _project_conversation(
+                db,
+                app_record=app_record,
+                user_id=user_id,
+                workspace_id=workspace_id,
+                workspace_key=workspace_key,
+                conversation_id=str(conversation_id),
+                conversation=conversation,
+            )
+
+    for node in nodes:
+        if isinstance(node, Mapping):
+            await _project_working_node(
+                db,
+                app_record=app_record,
+                user_id=user_id,
+                workspace_id=workspace_id,
+                workspace_key=workspace_key,
+                node=node,
+            )
+
+    for edge in edges:
+        if isinstance(edge, Mapping):
+            await _project_working_edge(
+                db,
+                app_record=app_record,
+                user_id=user_id,
+                workspace_id=workspace_id,
+                workspace_key=workspace_key,
+                edge=edge,
+            )
+
+    for experiment in experiments:
+        if isinstance(experiment, Mapping):
+            await _project_experiment(
+                db,
+                app_record=app_record,
+                user_id=user_id,
+                workspace_id=workspace_id,
+                workspace_key=workspace_key,
+                experiment=experiment,
+            )
+
+
+async def _project_conversation(
+    db: Any,
+    *,
+    app_record: str,
+    user_id: str,
+    workspace_id: str,
+    workspace_key: str,
+    conversation_id: str,
+    conversation: Mapping[str, Any],
+) -> None:
+    conversation_key = _conversation_key(user_id, workspace_id, conversation_id)
+    transcript = conversation.get("transcript") if isinstance(conversation.get("transcript"), list) else []
+    await db.upsert(
+        _projection_record_id("coach_conversation", app_record, conversation_key),
+        {
+            "app_record": app_record,
+            "workspace_key": workspace_key,
+            "conversation_key": conversation_key,
+            "user_id": user_id,
+            "workspace_id": workspace_id,
+            "conversation_id": conversation_id,
+            "created_order": _int_or_zero(conversation.get("created_order")),
+            "updated_order": _int_or_zero(conversation.get("updated_order")),
+            "message_count": len(transcript),
+            "last_message": _last_message_text(transcript),
+        },
+    )
+    for message in transcript:
+        if not isinstance(message, Mapping):
+            continue
+        await db.upsert(
+            _projection_record_id(
+                "coach_message",
+                app_record,
+                conversation_key,
+                str(message.get("index")),
+            ),
+            {
+                "app_record": app_record,
+                "workspace_key": workspace_key,
+                "conversation_key": conversation_key,
+                "user_id": user_id,
+                "workspace_id": workspace_id,
+                "conversation_id": conversation_id,
+                "message_index": _int_or_zero(message.get("index")),
+                "role": _string_or_empty(message.get("role")),
+                "text": _string_or_empty(message.get("text")),
+                "trace_available": bool(message.get("trace_available")),
+                "experiment_id": _nested_string(message, "experiment", "id"),
+            },
+        )
+
+
+async def _project_working_node(
+    db: Any,
+    *,
+    app_record: str,
+    user_id: str,
+    workspace_id: str,
+    workspace_key: str,
+    node: Mapping[str, Any],
+) -> None:
+    node_id = _string_or_empty(node.get("id"))
+    if not node_id:
+        return
+    await db.upsert(
+        _projection_record_id("working_node", app_record, workspace_key, node_id),
+        {
+            "app_record": app_record,
+            "workspace_key": workspace_key,
+            "user_id": user_id,
+            "workspace_id": workspace_id,
+            "node_id": node_id,
+            "kind": _string_or_empty(node.get("kind")),
+            "label": _string_or_empty(node.get("label")),
+            "status": _string_or_empty(node.get("status")),
+            "confidence": _float_or_zero(node.get("confidence")),
+            "first_seen_turn": _int_or_zero(node.get("first_seen_turn")),
+            "last_seen_turn": _int_or_zero(node.get("last_seen_turn")),
+            "seen_count": _int_or_zero(node.get("seen_count")),
+            "provenance_count": len(node.get("provenance") or ()),
+        },
+    )
+    for index, provenance in enumerate(node.get("provenance") or ()):
+        if isinstance(provenance, Mapping):
+            await _project_provenance(
+                db,
+                table="working_node_provenance",
+                app_record=app_record,
+                workspace_key=workspace_key,
+                owner_id=node_id,
+                owner_kind="node",
+                index=index,
+                provenance=provenance,
+            )
+
+
+async def _project_working_edge(
+    db: Any,
+    *,
+    app_record: str,
+    user_id: str,
+    workspace_id: str,
+    workspace_key: str,
+    edge: Mapping[str, Any],
+) -> None:
+    edge_id = _string_or_empty(edge.get("id"))
+    if not edge_id:
+        return
+    await db.upsert(
+        _projection_record_id("working_edge", app_record, workspace_key, edge_id),
+        {
+            "app_record": app_record,
+            "workspace_key": workspace_key,
+            "user_id": user_id,
+            "workspace_id": workspace_id,
+            "edge_id": edge_id,
+            "source_node_id": _string_or_empty(edge.get("source")),
+            "target_node_id": _string_or_empty(edge.get("target")),
+            "kind": _string_or_empty(edge.get("kind")),
+            "status": _string_or_empty(edge.get("status")),
+            "confidence": _float_or_zero(edge.get("confidence")),
+            "first_seen_turn": _int_or_zero(edge.get("first_seen_turn")),
+            "last_seen_turn": _int_or_zero(edge.get("last_seen_turn")),
+            "seen_count": _int_or_zero(edge.get("seen_count")),
+            "provenance_count": len(edge.get("provenance") or ()),
+        },
+    )
+    for index, provenance in enumerate(edge.get("provenance") or ()):
+        if isinstance(provenance, Mapping):
+            await _project_provenance(
+                db,
+                table="working_edge_provenance",
+                app_record=app_record,
+                workspace_key=workspace_key,
+                owner_id=edge_id,
+                owner_kind="edge",
+                index=index,
+                provenance=provenance,
+            )
+
+
+async def _project_provenance(
+    db: Any,
+    *,
+    table: str,
+    app_record: str,
+    workspace_key: str,
+    owner_id: str,
+    owner_kind: str,
+    index: int,
+    provenance: Mapping[str, Any],
+) -> None:
+    await db.upsert(
+        _projection_record_id(table, app_record, workspace_key, owner_id, str(index)),
+        {
+            "app_record": app_record,
+            "workspace_key": workspace_key,
+            "owner_id": owner_id,
+            "owner_kind": owner_kind,
+            "provenance_index": index,
+            "turn": _int_or_zero(provenance.get("turn")),
+            "source": _string_or_empty(provenance.get("source")),
+            "field": _string_or_empty(provenance.get("field")),
+            "evidence": _string_or_empty(provenance.get("evidence")),
+            "message_index": _optional_int(provenance.get("message_index")),
+        },
+    )
+
+
+async def _project_experiment(
+    db: Any,
+    *,
+    app_record: str,
+    user_id: str,
+    workspace_id: str,
+    workspace_key: str,
+    experiment: Mapping[str, Any],
+) -> None:
+    experiment_id = _string_or_empty(experiment.get("id"))
+    if not experiment_id:
+        return
+    await db.upsert(
+        _projection_record_id("coaching_experiment", app_record, workspace_key, experiment_id),
+        {
+            "app_record": app_record,
+            "workspace_key": workspace_key,
+            "user_id": user_id,
+            "workspace_id": workspace_id,
+            "experiment_id": experiment_id,
+            "status": _string_or_empty(experiment.get("status")),
+            "intervention": _string_or_empty(experiment.get("intervention")),
+            "pattern": _string_or_empty(experiment.get("pattern")),
+            "test": _string_or_empty(experiment.get("test")),
+            "try_step": _string_or_empty(experiment.get("try_step")),
+            "prediction": _string_or_empty(experiment.get("prediction")),
+            "measure": _string_or_empty(experiment.get("measure")),
+            "message_index": _optional_int(experiment.get("message_index")),
+        },
+    )
+
+
+def _projection_record_id(table: str, *parts: str) -> str:
+    digest = hashlib.sha256("\x1f".join(parts).encode("utf-8")).hexdigest()
+    return f"{table}:{digest}"
+
+
+def _workspace_key(user_id: str, workspace_id: str) -> str:
+    return f"{user_id}/{workspace_id}"
+
+
+def _conversation_key(user_id: str, workspace_id: str, conversation_id: str) -> str:
+    return f"{user_id}/{workspace_id}/{conversation_id}"
+
+
+def _last_message_text(transcript: list[Any]) -> str | None:
+    for item in reversed(transcript):
+        if isinstance(item, Mapping):
+            text = _string_or_empty(item.get("text"))
+            if text:
+                return text
+    return None
+
+
+def _nested_string(data: Mapping[str, Any], *keys: str) -> str | None:
+    item: Any = data
+    for key in keys:
+        if not isinstance(item, Mapping):
+            return None
+        item = item.get(key)
+    value = _string_or_empty(item)
+    return value or None
+
+
+def _string_or_empty(value: Any) -> str:
+    return "" if value is None else str(value)
+
+
+def _int_or_zero(value: Any) -> int:
+    return _optional_int(value) or 0
+
+
+def _optional_int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _float_or_zero(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _json_snapshot(data: Mapping[str, Any]) -> dict[str, Any]:

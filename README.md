@@ -156,10 +156,22 @@ uv run python -m coach.api \
   --surreal-password root
 ```
 
-The SurrealDB backend currently stores the same app snapshot as a document
-record. The next step is to project `working_node`, `working_edge`, messages,
-and provenance into graph-native SurrealDB records while preserving the same
-store interface.
+The SurrealDB backend keeps the full app snapshot as a recovery record and also
+projects queryable records into:
+
+- `coach_user`
+- `coach_workspace`
+- `coach_conversation`
+- `coach_message`
+- `working_node`
+- `working_edge`
+- `working_node_provenance`
+- `working_edge_provenance`
+- `coaching_experiment`
+
+The projection is rebuilt on each snapshot save, so query results stay aligned
+with the current workspace state while the Python snapshot remains the source
+of truth for app restoration.
 
 API surface:
 
