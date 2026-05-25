@@ -1,0 +1,36 @@
+# Secrets
+.deepseek_api_key
+
+# Local app state
+.coach_chat_state.json
+.coach_chat_state.json.tmp
+.coach_surreal.db/
+.coach_surreal.db.tmp/
+.coach_surreal*.db/
+.coach_surreal*.db.tmp/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# Logs and scratch output
+*.log
+*.tmp
+.DS_Store

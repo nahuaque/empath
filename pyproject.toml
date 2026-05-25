@@ -1,0 +1,14 @@
+[project]
+name = "coach"
+version = "0.1.0"
+description = "A miniKanren therapeutic reasoning kernel for coaching experiments"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "minikanren>=1.0.5",
+    "pydantic-ai>=1.102.0",
+    "sse-starlette>=3.4.4",
+    "starlette>=1.1.0",
+    "surrealdb>=2.0.0",
+    "uvicorn>=0.38.0",
+]
