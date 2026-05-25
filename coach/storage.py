@@ -14,6 +14,7 @@ import hashlib
 import importlib
 import json
 from pathlib import Path
+import re
 from typing import Any, Protocol
 
 import anyio
@@ -155,6 +156,29 @@ class SurrealStateBackend:
                 app_record=self.record_id,
                 user_id=user_id,
                 workspace_id=workspace_id,
+            )
+
+    async def memory_packet(
+        self,
+        *,
+        user_id: str,
+        workspace_id: str,
+        conversation_id: str,
+        extraction: Mapping[str, Any],
+        kernel_snapshot: Mapping[str, Any],
+    ) -> dict[str, Any] | None:
+        """Retrieve compact workspace memory for response planning."""
+
+        async with self._lock:
+            db = await self._database()
+            return await _memory_packet(
+                db,
+                app_record=self.record_id,
+                user_id=user_id,
+                workspace_id=workspace_id,
+                conversation_id=conversation_id,
+                extraction=extraction,
+                kernel_snapshot=kernel_snapshot,
             )
 
     async def close(self) -> None:
@@ -506,6 +530,363 @@ async def _compaction_summary(
         "active_examples": [dict(item) for item in active_nodes if isinstance(item, Mapping)],
         "hidden_examples": [dict(item) for item in hidden_nodes if isinstance(item, Mapping)],
     }
+
+
+async def _memory_packet(
+    db: Any,
+    *,
+    app_record: str,
+    user_id: str,
+    workspace_id: str,
+    conversation_id: str,
+    extraction: Mapping[str, Any],
+    kernel_snapshot: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    workspace_key = _workspace_key(user_id, workspace_id)
+    conversation_key = _conversation_key(user_id, workspace_id, conversation_id)
+    query_terms = _memory_query_terms(extraction, kernel_snapshot)
+
+    nodes = await db.query(
+        "SELECT node_id, kind, label, status, confidence, seen_count, last_seen_turn, "
+        "active_in_map, hidden_by_policy, retention_action, compaction_reason, priority_score "
+        "FROM working_node "
+        "WHERE app_record = $app_record AND workspace_key = $workspace_key",
+        {"app_record": app_record, "workspace_key": workspace_key},
+    )
+    nodes = [item for item in nodes if isinstance(item, Mapping)]
+    ranked_nodes = _rank_memory_nodes(nodes, query_terms)
+    active_nodes = [item for item in ranked_nodes if item.get("active_in_map")][:10]
+    suppressed = [
+        item
+        for item in ranked_nodes
+        if _string_or_empty(item.get("retention_action"))
+        in {"suppress", "suppress_reintroduction"}
+        or _string_or_empty(item.get("status")) in {"rejected", "removed"}
+    ][:6]
+    archived_relevant = [
+        item
+        for item in ranked_nodes
+        if not item.get("active_in_map")
+        and _string_or_empty(item.get("retention_action")) == "archive"
+    ][:4]
+    open_objectives = [
+        item
+        for item in ranked_nodes
+        if item.get("active_in_map")
+        and _string_or_empty(item.get("kind"))
+        in {
+            "objective",
+            "project",
+            "task",
+            "next_action",
+            "obstacle",
+            "success_measure",
+            "implementation_intention",
+            "waiting_for",
+        }
+    ][:8]
+    recent_patterns = [
+        item
+        for item in ranked_nodes
+        if item.get("active_in_map")
+        and _string_or_empty(item.get("kind")) in {"hypothesis", "longitudinal_pattern"}
+    ][:8]
+
+    node_ids = {
+        _string_or_empty(item.get("node_id"))
+        for item in [*active_nodes, *open_objectives, *recent_patterns]
+        if _string_or_empty(item.get("node_id"))
+    }
+    edges = []
+    if node_ids:
+        all_edges = await db.query(
+            "SELECT edge_id, source_node_id, target_node_id, kind, confidence, active_in_map, priority_score "
+            "FROM working_edge "
+            "WHERE app_record = $app_record "
+            "AND workspace_key = $workspace_key "
+            "AND active_in_map = true",
+            {"app_record": app_record, "workspace_key": workspace_key},
+        )
+        node_labels = {
+            _string_or_empty(item.get("node_id")): _string_or_empty(item.get("label"))
+            for item in nodes
+        }
+        for edge in all_edges:
+            if not isinstance(edge, Mapping):
+                continue
+            source = _string_or_empty(edge.get("source_node_id"))
+            target = _string_or_empty(edge.get("target_node_id"))
+            if source in node_ids or target in node_ids:
+                edges.append(
+                    {
+                        **dict(edge),
+                        "source_label": node_labels.get(source, source),
+                        "target_label": node_labels.get(target, target),
+                    }
+                )
+        edges.sort(
+            key=lambda item: (
+                -_float_or_zero(item.get("priority_score")),
+                _string_or_empty(item.get("kind")),
+            )
+        )
+        edges = edges[:10]
+
+    experiments = await db.query(
+        "SELECT experiment_id, intervention, pattern, status, try_step, prediction, measure, message_index "
+        "FROM coaching_experiment "
+        "WHERE app_record = $app_record AND workspace_key = $workspace_key "
+        "ORDER BY message_index DESC LIMIT 8",
+        {"app_record": app_record, "workspace_key": workspace_key},
+    )
+    experiments = [item for item in experiments if isinstance(item, Mapping)]
+
+    messages = await db.query(
+        "SELECT role, text, message_index FROM coach_message "
+        "WHERE app_record = $app_record AND conversation_key = $conversation_key "
+        "ORDER BY message_index DESC LIMIT 4",
+        {"app_record": app_record, "conversation_key": conversation_key},
+    )
+    messages = [item for item in messages if isinstance(item, Mapping)]
+    messages.sort(key=lambda item: _int_or_zero(item.get("message_index")))
+
+    packet = {
+        "source": "surreal_projection",
+        "workspace_key": workspace_key,
+        "query_terms": tuple(sorted(query_terms))[:24],
+        "active_focus": _memory_records(active_nodes[:8]),
+        "open_objectives": _memory_records(open_objectives),
+        "recent_patterns": _memory_records(recent_patterns),
+        "supporting_edges": _memory_edges(edges),
+        "prior_experiments": _memory_records(experiments),
+        "suppressed_assumptions": _memory_records(suppressed),
+        "archived_relevant": _memory_records(archived_relevant),
+        "recent_messages": _memory_records(messages),
+        "counts": {
+            "active_focus": len(active_nodes),
+            "open_objectives": len(open_objectives),
+            "recent_patterns": len(recent_patterns),
+            "supporting_edges": len(edges),
+            "prior_experiments": len(experiments),
+            "suppressed_assumptions": len(suppressed),
+            "archived_relevant": len(archived_relevant),
+        },
+    }
+    if not any(
+        packet[key]
+        for key in (
+            "active_focus",
+            "open_objectives",
+            "recent_patterns",
+            "supporting_edges",
+            "prior_experiments",
+            "suppressed_assumptions",
+            "archived_relevant",
+        )
+    ):
+        return None
+    packet["context"] = _format_memory_context(packet)
+    return packet
+
+
+def _memory_query_terms(
+    extraction: Mapping[str, Any],
+    kernel_snapshot: Mapping[str, Any],
+) -> set[str]:
+    terms: set[str] = set()
+    for field in (
+        "situations",
+        "thoughts",
+        "beliefs",
+        "emotions",
+        "behaviors",
+        "values",
+        "goals",
+        "concerns",
+        "tasks",
+        "challenges",
+        "objectives",
+        "projects",
+        "next_actions",
+        "obstacles",
+        "stakes",
+        "domains",
+    ):
+        for value in extraction.get(field) or ():
+            terms.update(_tokenize_memory_text(value))
+    for hypothesis in kernel_snapshot.get("hypotheses") or ():
+        if isinstance(hypothesis, Mapping):
+            terms.update(_tokenize_memory_text(hypothesis.get("source")))
+            terms.update(_tokenize_memory_text(hypothesis.get("pattern")))
+    return {term for term in terms if len(term) >= 3}
+
+
+def _rank_memory_nodes(
+    nodes: list[Mapping[str, Any]],
+    query_terms: set[str],
+) -> list[dict[str, Any]]:
+    ranked = []
+    for node in nodes:
+        label = _string_or_empty(node.get("label"))
+        kind = _string_or_empty(node.get("kind"))
+        node_terms = _tokenize_memory_text(f"{kind} {label}")
+        overlap = len(query_terms & node_terms)
+        active_bonus = 2.0 if node.get("active_in_map") else 0.0
+        suppressed_bonus = (
+            1.5
+            if _string_or_empty(node.get("retention_action"))
+            in {"suppress", "suppress_reintroduction"}
+            else 0.0
+        )
+        score = (
+            4.0 * overlap
+            + active_bonus
+            + suppressed_bonus
+            + 0.03 * _float_or_zero(node.get("priority_score"))
+            + min(_int_or_zero(node.get("seen_count")), 4) * 0.4
+        )
+        item = dict(node)
+        item["memory_score"] = round(score, 3)
+        if score > 0 or item.get("active_in_map") or suppressed_bonus:
+            ranked.append(item)
+    ranked.sort(
+        key=lambda item: (
+            -_float_or_zero(item.get("memory_score")),
+            _string_or_empty(item.get("kind")),
+            _string_or_empty(item.get("label")).casefold(),
+        )
+    )
+    return ranked
+
+
+def _memory_records(items: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    records = []
+    for item in items:
+        record = {
+            key: item.get(key)
+            for key in (
+                "node_id",
+                "kind",
+                "label",
+                "status",
+                "confidence",
+                "seen_count",
+                "last_seen_turn",
+                "compaction_reason",
+                "retention_action",
+                "memory_score",
+                "experiment_id",
+                "intervention",
+                "pattern",
+                "try_step",
+                "prediction",
+                "measure",
+                "message_index",
+                "role",
+                "text",
+            )
+            if item.get(key) not in (None, "", (), [])
+        }
+        if record:
+            records.append(record)
+    return records
+
+
+def _memory_edges(items: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    records = []
+    for item in items:
+        records.append(
+            {
+                key: item.get(key)
+                for key in (
+                    "edge_id",
+                    "kind",
+                    "source_node_id",
+                    "source_label",
+                    "target_node_id",
+                    "target_label",
+                    "confidence",
+                    "priority_score",
+                )
+                if item.get(key) not in (None, "", (), [])
+            }
+        )
+    return records
+
+
+def _format_memory_context(packet: Mapping[str, Any]) -> str:
+    lines = ["Retrieved workspace memory packet:"]
+    for title, key in (
+        ("Active focus", "active_focus"),
+        ("Open objectives and actions", "open_objectives"),
+        ("Recent patterns", "recent_patterns"),
+        ("Prior experiments", "prior_experiments"),
+        ("Suppressed assumptions to avoid", "suppressed_assumptions"),
+        ("Archived but relevant", "archived_relevant"),
+    ):
+        items = packet.get(key) or ()
+        if not items:
+            continue
+        lines.append(f"{title}:")
+        for item in items[:6]:
+            if not isinstance(item, Mapping):
+                continue
+            label = (
+                item.get("label")
+                or item.get("try_step")
+                or item.get("text")
+                or item.get("experiment_id")
+                or "item"
+            )
+            kind = item.get("kind") or item.get("intervention") or item.get("role")
+            suffix = f" [{kind}]" if kind else ""
+            if reason := item.get("retention_action"):
+                suffix += f" ({reason})"
+            lines.append(f"- {_compact_memory_line(label)}{suffix}")
+    edges = packet.get("supporting_edges") or ()
+    if edges:
+        lines.append("Relevant support paths:")
+        for item in edges[:5]:
+            if isinstance(item, Mapping):
+                lines.append(
+                    "- "
+                    f"{_compact_memory_line(item.get('source_label'))} -> "
+                    f"{_string_or_empty(item.get('kind')).replace('_', ' ')} -> "
+                    f"{_compact_memory_line(item.get('target_label'))}"
+                )
+    lines.append("Use this memory lightly; ask or invite correction if continuity is uncertain.")
+    return "\n".join(lines)
+
+
+def _tokenize_memory_text(value: Any) -> set[str]:
+    text = _string_or_empty(value).casefold()
+    return {
+        token
+        for token in re.split(r"[^a-z0-9_]+", text)
+        if len(token) >= 3
+        and token
+        not in {
+            "the",
+            "and",
+            "that",
+            "this",
+            "with",
+            "because",
+            "will",
+            "they",
+            "them",
+            "you",
+            "your",
+            "about",
+        }
+    }
+
+
+def _compact_memory_line(value: Any, *, limit: int = 130) -> str:
+    text = " ".join(_string_or_empty(value).split())
+    if len(text) <= limit:
+        return text
+    return f"{text[: max(0, limit - 1)].rstrip()}..."
 
 
 def _selected_intervention(trace: Mapping[str, Any]) -> str:

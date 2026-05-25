@@ -595,6 +595,27 @@ class ChatWorkflowTests(unittest.TestCase):
         self.assertIn("only on the latest user message", prompt)
         self.assertIn("I avoided the update yesterday", prompt)
 
+    def test_response_prompt_can_include_retrieved_memory_context(self):
+        extraction = ExtractedCoachingState(emotions=("anxiety",))
+        snapshot = {"hypotheses": [], "candidates": []}
+        prompt = build_response_prompt(
+            "I'm still avoiding the investor update.",
+            extraction,
+            snapshot,
+            memory_context=(
+                "Retrieved workspace memory packet:\n"
+                "Active focus:\n"
+                "- investor update [task]\n"
+                "Suppressed assumptions to avoid:\n"
+                "- investors will definitely reject me [belief]"
+            ),
+        )
+
+        self.assertIn("Retrieved workspace memory", prompt)
+        self.assertIn("continuity and user-specific learning", prompt)
+        self.assertIn("investor update", prompt)
+        self.assertIn("Suppressed assumptions", prompt)
+
     def test_response_prompt_can_include_policy_context(self):
         extraction = ExtractedCoachingState(emotions=("anxiety",))
         snapshot = {"hypotheses": [], "candidates": []}

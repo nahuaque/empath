@@ -65,6 +65,7 @@ class ApiSurfaceTests(unittest.TestCase):
         self.assertIn("progressToast", page.text)
         self.assertIn("progressStages", page.text)
         self.assertIn("Reasoning through options", page.text)
+        self.assertIn("Retrieving workspace memory", page.text)
         self.assertIn("messages.appendChild(progressToast)", page.text)
         self.assertIn("progressAnchor", page.text)
         self.assertIn('insertAdjacentElement("afterend", progressToast)', page.text)
@@ -97,6 +98,7 @@ class ApiSurfaceTests(unittest.TestCase):
         self.assertIn("policySummary", page.text)
         self.assertIn("renderPolicy", page.text)
         self.assertIn('source.addEventListener("policy"', page.text)
+        self.assertIn('source.addEventListener("memory"', page.text)
         self.assertIn("Concerns", page.text)
         self.assertIn("Tasks", page.text)
         self.assertIn("Challenges", page.text)
@@ -247,6 +249,66 @@ class ApiSurfaceTests(unittest.TestCase):
         self.assertIn("They will think I am incompetent", text)
         self.assertIn("Working-map support", text)
         self.assertIn("Support paths", text)
+
+    def test_response_trace_uses_surreal_memory_packet(self):
+        backend = SurrealStateBackend(
+            url="mem://",
+            namespace="coach_api_test",
+            database="memory_packet",
+            record_id="app_state:memory",
+        )
+        app = create_app(
+            coach_factory=DeterministicKernelGuidedCoach,
+            dry_run=True,
+            state_backend=backend,
+        )
+        client = TestClient(app)
+        try:
+            first = client.post(
+                "/api/chat",
+                json={
+                    "workspace_id": "memory-workspace",
+                    "conversation_id": "alpha",
+                    "message": (
+                        "I keep avoiding the investor update because they will "
+                        "think I am incompetent."
+                    ),
+                },
+            )
+            second = client.post(
+                "/api/chat",
+                json={
+                    "workspace_id": "memory-workspace",
+                    "conversation_id": "alpha",
+                    "message": "I'm still avoiding the investor update.",
+                    "trace": True,
+                },
+            )
+            explanation = client.get(
+                "/api/chat/explain",
+                params={
+                    "workspace_id": "memory-workspace",
+                    "conversation_id": "alpha",
+                    "message_index": 4,
+                },
+            )
+        finally:
+            anyio.run(backend.close)
+
+        self.assertEqual(200, first.status_code)
+        self.assertEqual(200, second.status_code)
+        payload = second.json()
+        memory = payload["trace"]["memory"]
+        self.assertEqual("surreal_projection", memory["source"])
+        self.assertIn("memory_retrieval", payload["trace"]["pipeline"])
+        self.assertIn("Retrieved workspace memory packet", memory["context"])
+        self.assertTrue(memory["active_focus"])
+        self.assertGreater(memory["counts"]["active_focus"], 0)
+        self.assertEqual(200, explanation.status_code)
+        text = explanation.json()["explanation"]
+        self.assertIn("Memory used", text)
+        self.assertIn("Memory source: Surreal projection", text)
+        self.assertIn("Active focus", text)
 
     def test_trace_explanation_requires_assistant_message(self):
         app = create_app(

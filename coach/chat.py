@@ -345,6 +345,8 @@ class PreparedTurn:
     response_prompt: str
     local_context: str = ""
     longitudinal_context: str = ""
+    memory_context: str = ""
+    memory_packet: dict[str, Any] | None = None
     policy_context: str = ""
     policy_report: dict[str, Any] | None = None
 
@@ -412,6 +414,8 @@ class KernelGuidedCoach:
         recent_interventions: tuple[str, ...] = (),
         local_context: str = "",
         longitudinal_context: str = "",
+        memory_context: str = "",
+        memory_packet: dict[str, Any] | None = None,
         policy_context: str = "",
     ) -> PreparedTurn:
         self._turn_index += 1
@@ -438,9 +442,12 @@ class KernelGuidedCoach:
                 snapshot,
                 local_context=local_context,
                 longitudinal_context=longitudinal_context,
+                memory_context=memory_context,
                 policy_context=policy_context,
             ),
             local_context=local_context,
+            memory_context=memory_context,
+            memory_packet=memory_packet,
             policy_context=policy_context,
         )
 
@@ -452,6 +459,8 @@ class KernelGuidedCoach:
         recent_interventions: tuple[str, ...] = (),
         local_context: str = "",
         longitudinal_context: str = "",
+        memory_context: str = "",
+        memory_packet: dict[str, Any] | None = None,
         policy_context: str = "",
     ) -> ChatTurnResult:
         prepared = self.prepare_turn(
@@ -459,6 +468,8 @@ class KernelGuidedCoach:
             recent_interventions=recent_interventions,
             local_context=local_context,
             longitudinal_context=longitudinal_context,
+            memory_context=memory_context,
+            memory_packet=memory_packet,
             policy_context=policy_context,
         )
         return self.complete_prepared_turn(
@@ -517,6 +528,8 @@ class DeterministicKernelGuidedCoach:
         recent_interventions: tuple[str, ...] = (),
         local_context: str = "",
         longitudinal_context: str = "",
+        memory_context: str = "",
+        memory_packet: dict[str, Any] | None = None,
         policy_context: str = "",
     ) -> PreparedTurn:
         self._turn_index += 1
@@ -540,9 +553,12 @@ class DeterministicKernelGuidedCoach:
                 snapshot,
                 local_context=local_context,
                 longitudinal_context=longitudinal_context,
+                memory_context=memory_context,
                 policy_context=policy_context,
             ),
             local_context=local_context,
+            memory_context=memory_context,
+            memory_packet=memory_packet,
             policy_context=policy_context,
         )
 
@@ -574,6 +590,8 @@ class DeterministicKernelGuidedCoach:
         recent_interventions: tuple[str, ...] = (),
         local_context: str = "",
         longitudinal_context: str = "",
+        memory_context: str = "",
+        memory_packet: dict[str, Any] | None = None,
         policy_context: str = "",
     ) -> ChatTurnResult:
         prepared = self.prepare_turn(
@@ -581,6 +599,8 @@ class DeterministicKernelGuidedCoach:
             recent_interventions=recent_interventions,
             local_context=local_context,
             longitudinal_context=longitudinal_context,
+            memory_context=memory_context,
+            memory_packet=memory_packet,
             policy_context=policy_context,
         )
         return self.complete_prepared_turn(
@@ -732,6 +752,7 @@ def build_response_prompt(
     *,
     local_context: str = "",
     longitudinal_context: str = "",
+    memory_context: str = "",
     policy_context: str = "",
 ) -> str:
     prompt = (
@@ -755,6 +776,13 @@ def build_response_prompt(
         prompt += (
             "Longitudinal session context, to use as tentative context only:\n"
             f"{longitudinal_context.strip()}\n\n"
+        )
+    if memory_context.strip():
+        prompt += (
+            "Retrieved workspace memory from the Surreal working map. Use this "
+            "for continuity and user-specific learning; do not overrule the "
+            "latest user message or reintroduce suppressed assumptions:\n"
+            f"{memory_context.strip()}\n\n"
         )
     if policy_context.strip():
         prompt += (
@@ -1153,6 +1181,8 @@ def build_turn_trace(
         response_prompt=turn.prepared.response_prompt,
         local_context=turn.prepared.local_context,
         longitudinal_context=turn.prepared.longitudinal_context,
+        memory_context=turn.prepared.memory_context,
+        memory_packet=turn.prepared.memory_packet,
         policy_context=turn.prepared.policy_context,
         policy_report=turn.prepared.policy_report,
         plan_coherence=turn.plan_coherence,
@@ -1171,6 +1201,8 @@ def build_debug_trace(
     response_prompt: str | None = None,
     local_context: str = "",
     longitudinal_context: str = "",
+    memory_context: str = "",
+    memory_packet: dict[str, Any] | None = None,
     policy_context: str = "",
     policy_report: dict[str, Any] | None = None,
     plan_coherence: dict[str, Any] | None = None,
@@ -1196,6 +1228,8 @@ def build_debug_trace(
         "structured_extraction",
         "therapeutic_kernel",
     ]
+    if memory_context.strip() or memory_packet:
+        pipeline.append("memory_retrieval")
     if policy_context.strip() or policy_report:
         pipeline.append("adaptive_policy")
     pipeline.extend(["response_plan", "renderer"])
@@ -1233,6 +1267,11 @@ def build_debug_trace(
         trace["longitudinal_context"] = state_context
     if conversation_context := local_context.strip():
         trace["local_context"] = conversation_context
+    if memory_context.strip() or memory_packet:
+        trace["memory"] = {
+            "context": memory_context.strip(),
+            **(memory_packet or {}),
+        }
     if policy_context.strip() or policy_report:
         trace["policy"] = {
             "context": policy_context.strip(),
@@ -1372,6 +1411,19 @@ def format_debug_trace(trace: dict[str, Any]) -> str:
     if context := trace.get("local_context"):
         lines.append("- local conversation context:")
         lines.extend(f"  {line}" for line in str(context).splitlines())
+
+    if memory := trace.get("memory"):
+        lines.append("- retrieved workspace memory:")
+        context = str(memory.get("context") or "").strip()
+        if context:
+            lines.extend(f"  {line}" for line in context.splitlines())
+        else:
+            counts = memory.get("counts") or {}
+            if counts:
+                lines.append(
+                    "  "
+                    + ", ".join(f"{key}={value}" for key, value in counts.items())
+                )
 
     if policy := trace.get("policy"):
         lines.append("- adaptive policy:")

@@ -402,6 +402,37 @@ class ChatSessionStore:
             workspace_id=scope.workspace_id,
         )
 
+    async def memory_packet(
+        self,
+        scope: ChatScope,
+        *,
+        extraction: Any,
+        kernel_snapshot: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Fetch a compact workspace memory packet for response planning."""
+
+        extraction_data = (
+            extraction.model_dump()
+            if hasattr(extraction, "model_dump")
+            else dict(extraction or {})
+        )
+        provider = getattr(self._state_backend, "memory_packet", None)
+        if provider is not None:
+            packet = await provider(
+                user_id=scope.user_id,
+                workspace_id=scope.workspace_id,
+                conversation_id=scope.conversation_id,
+                extraction=extraction_data,
+                kernel_snapshot=kernel_snapshot,
+            )
+            if packet:
+                return packet
+        return _fallback_memory_packet(
+            scope,
+            extraction=extraction_data,
+            kernel_snapshot=kernel_snapshot,
+        )
+
     async def _ensure_loaded_locked(self) -> None:
         if self._loaded:
             return
@@ -643,6 +674,7 @@ def create_app(
             turn, formulation_delta, experiment = await _run_chat_turn(
                 scope,
                 payload.message,
+                store=store,
             )
         except Exception as exc:  # pragma: no cover - integration/runtime boundary
             return JSONResponse({"detail": str(exc)}, status_code=500)
@@ -934,9 +966,16 @@ def create_app(
                             longitudinal_context=longitudinal_context,
                         )
                     )
+                    yield _sse("status", {"stage": "memory_retrieval"})
+                    memory_packet = await store.memory_packet(
+                        scope,
+                        extraction=prepared.extraction,
+                        kernel_snapshot=prepared.kernel_snapshot,
+                    )
                     prepared = _apply_policy_to_prepared(
                         prepared,
                         scope.workspace.policy,
+                        memory_packet=memory_packet,
                     )
                     yield _sse(
                         "extraction",
@@ -946,6 +985,8 @@ def create_app(
                     yield _sse("kernel", prepared.kernel_snapshot)
                     if prepared.policy_report:
                         yield _sse("policy", prepared.policy_report)
+                    if prepared.memory_packet:
+                        yield _sse("memory", prepared.memory_packet)
                     yield _sse("status", {"stage": "response_plan"})
                     turn = await anyio.to_thread.run_sync(
                         lambda: scope.conversation.coach.complete_prepared_turn(
@@ -1037,6 +1078,8 @@ def create_app(
 async def _run_chat_turn(
     scope: ChatScope,
     message: str,
+    *,
+    store: ChatSessionStore,
 ) -> tuple[ChatTurnResult, FormulationDelta, CoachingExperiment]:
     async with scope.workspace.lock:  # type: ignore[arg-type]
         _append_transcript_message(scope.conversation, "user", message)
@@ -1052,7 +1095,16 @@ async def _run_chat_turn(
                 longitudinal_context=longitudinal_context,
             )
         )
-        prepared = _apply_policy_to_prepared(prepared, scope.workspace.policy)
+        memory_packet = await store.memory_packet(
+            scope,
+            extraction=prepared.extraction,
+            kernel_snapshot=prepared.kernel_snapshot,
+        )
+        prepared = _apply_policy_to_prepared(
+            prepared,
+            scope.workspace.policy,
+            memory_packet=memory_packet,
+        )
         turn = await anyio.to_thread.run_sync(
             lambda: scope.conversation.coach.complete_prepared_turn(
                 prepared,
@@ -1169,8 +1221,12 @@ def _session_payload(scope: ChatScope) -> dict[str, Any]:
 def _apply_policy_to_prepared(
     prepared: PreparedTurn,
     policy: PolicyMemory,
+    *,
+    memory_packet: dict[str, Any] | None = None,
 ) -> PreparedTurn:
     policy_context = policy.prompt_context()
+    packet = memory_packet or prepared.memory_packet
+    memory_context = str((packet or {}).get("context") or prepared.memory_context or "")
     adjusted_snapshot, policy_report = policy.apply_to_kernel_snapshot(
         prepared.kernel_snapshot
     )
@@ -1185,6 +1241,8 @@ def _apply_policy_to_prepared(
         extraction_prompt=prepared.extraction_prompt,
         local_context=prepared.local_context,
         longitudinal_context=prepared.longitudinal_context,
+        memory_context=memory_context,
+        memory_packet=packet,
         policy_context=policy_context,
         policy_report=policy_report if has_policy_report else None,
         response_prompt=build_response_prompt(
@@ -1193,6 +1251,7 @@ def _apply_policy_to_prepared(
             adjusted_snapshot,
             local_context=prepared.local_context,
             longitudinal_context=prepared.longitudinal_context,
+            memory_context=memory_context,
             policy_context=policy_context,
         ),
     )
@@ -1430,6 +1489,215 @@ def _fallback_compaction_summary(scope: WorkspaceScope) -> dict[str, Any]:
     }
 
 
+def _fallback_memory_packet(
+    scope: ChatScope,
+    *,
+    extraction: dict[str, Any],
+    kernel_snapshot: dict[str, Any],
+) -> dict[str, Any] | None:
+    graph = scope.workspace.memory.snapshot(
+        include_archived=True,
+        include_rejected=True,
+        include_removed=True,
+    )
+    query_terms = _memory_query_terms(extraction, kernel_snapshot)
+    ranked_nodes = sorted(
+        (
+            node
+            for node in graph.nodes
+            if node.status not in {"removed"}
+        ),
+        key=lambda node: (
+            -_memory_node_score(node.label, node.kind, query_terms, node.status),
+            node.kind,
+            node.label.casefold(),
+        ),
+    )
+    active_focus = [
+        _memory_node_record(node)
+        for node in ranked_nodes
+        if node.status not in {"archived", "rejected", "removed"}
+    ][:8]
+    suppressed = [
+        _memory_node_record(node)
+        for node in ranked_nodes
+        if node.status in {"rejected", "removed"}
+    ][:6]
+    archived = [
+        _memory_node_record(node)
+        for node in ranked_nodes
+        if node.status == "archived"
+    ][:4]
+    open_objectives = [
+        _memory_node_record(node)
+        for node in ranked_nodes
+        if node.status not in {"archived", "rejected", "removed"}
+        and node.kind
+        in {
+            "objective",
+            "project",
+            "task",
+            "next_action",
+            "obstacle",
+            "success_measure",
+            "implementation_intention",
+            "waiting_for",
+        }
+    ][:8]
+    recent_patterns = [
+        _memory_node_record(node)
+        for node in ranked_nodes
+        if node.status not in {"archived", "rejected", "removed"}
+        and node.kind in {"hypothesis", "longitudinal_pattern"}
+    ][:8]
+    packet = {
+        "source": "case_memory_fallback",
+        "workspace_key": f"{scope.user_id}/{scope.workspace_id}",
+        "query_terms": tuple(sorted(query_terms))[:24],
+        "active_focus": active_focus,
+        "open_objectives": open_objectives,
+        "recent_patterns": recent_patterns,
+        "supporting_edges": [],
+        "prior_experiments": [
+            item.model_dump(exclude_none=True)
+            for item in scope.workspace.experiments.snapshot()[:8]
+        ],
+        "suppressed_assumptions": suppressed,
+        "archived_relevant": archived,
+        "recent_messages": [
+            item.model_dump(exclude_none=True)
+            for item in scope.conversation.transcript[-4:]
+        ],
+        "counts": {
+            "active_focus": len(active_focus),
+            "open_objectives": len(open_objectives),
+            "recent_patterns": len(recent_patterns),
+            "prior_experiments": len(scope.workspace.experiments.snapshot()),
+            "suppressed_assumptions": len(suppressed),
+            "archived_relevant": len(archived),
+        },
+    }
+    if not any(
+        packet[key]
+        for key in (
+            "active_focus",
+            "open_objectives",
+            "recent_patterns",
+            "prior_experiments",
+            "suppressed_assumptions",
+            "archived_relevant",
+        )
+    ):
+        return None
+    packet["context"] = _format_memory_packet_context(packet)
+    return packet
+
+
+def _memory_node_record(node: Any) -> dict[str, Any]:
+    return {
+        "node_id": node.id,
+        "kind": node.kind,
+        "label": node.label,
+        "status": node.status,
+        "confidence": node.confidence,
+        "seen_count": node.seen_count,
+        "last_seen_turn": node.last_seen_turn,
+    }
+
+
+def _memory_query_terms(
+    extraction: dict[str, Any],
+    kernel_snapshot: dict[str, Any],
+) -> set[str]:
+    terms: set[str] = set()
+    for field in (
+        "situations",
+        "thoughts",
+        "beliefs",
+        "emotions",
+        "behaviors",
+        "values",
+        "goals",
+        "concerns",
+        "tasks",
+        "challenges",
+        "objectives",
+        "projects",
+        "next_actions",
+        "obstacles",
+        "stakes",
+        "domains",
+    ):
+        for value in extraction.get(field) or ():
+            terms.update(_tokenize_memory_text(value))
+    for hypothesis in kernel_snapshot.get("hypotheses") or ():
+        if isinstance(hypothesis, dict):
+            terms.update(_tokenize_memory_text(hypothesis.get("source")))
+            terms.update(_tokenize_memory_text(hypothesis.get("pattern")))
+    return terms
+
+
+def _memory_node_score(label: str, kind: str, terms: set[str], status: str) -> float:
+    node_terms = _tokenize_memory_text(f"{kind} {label}")
+    overlap = len(terms & node_terms)
+    status_bonus = 0.0 if status in {"archived", "rejected", "removed"} else 2.0
+    return 4.0 * overlap + status_bonus
+
+
+def _tokenize_memory_text(value: Any) -> set[str]:
+    return {
+        token
+        for token in re.split(r"[^a-z0-9_]+", str(value or "").casefold())
+        if len(token) >= 3
+        and token
+        not in {
+            "the",
+            "and",
+            "that",
+            "this",
+            "with",
+            "because",
+            "will",
+            "they",
+            "them",
+            "you",
+            "your",
+            "about",
+        }
+    }
+
+
+def _format_memory_packet_context(packet: dict[str, Any]) -> str:
+    lines = ["Retrieved workspace memory packet:"]
+    for title, key in (
+        ("Active focus", "active_focus"),
+        ("Open objectives and actions", "open_objectives"),
+        ("Recent patterns", "recent_patterns"),
+        ("Prior experiments", "prior_experiments"),
+        ("Suppressed assumptions to avoid", "suppressed_assumptions"),
+        ("Archived but relevant", "archived_relevant"),
+    ):
+        items = packet.get(key) or ()
+        if not items:
+            continue
+        lines.append(f"{title}:")
+        for item in items[:6]:
+            label = (
+                item.get("label")
+                or item.get("try_step")
+                or item.get("text")
+                or item.get("experiment_id")
+                or "item"
+            )
+            kind = item.get("kind") or item.get("intervention") or item.get("role")
+            suffix = f" [{kind}]" if kind else ""
+            if reason := item.get("retention_action"):
+                suffix += f" ({reason})"
+            lines.append(f"- {_compact_preview(str(label), limit=130)}{suffix}")
+    lines.append("Use this memory lightly; ask or invite correction if continuity is uncertain.")
+    return "\n".join(lines)
+
+
 def _resolve_scope_id(value: str | None, default: str) -> str:
     cleaned = str(value or "").strip()
     return cleaned or default
@@ -1545,6 +1813,83 @@ def _format_graph_evidence(evidence: dict[str, Any] | None) -> list[str]:
     return lines
 
 
+def _format_memory_used(memory: Any) -> list[str]:
+    if not isinstance(memory, dict):
+        return []
+
+    lines = [
+        "Memory used: before planning the response, the coach retrieved a compact workspace packet so the latest turn could be read in light continuity."
+    ]
+
+    source = str(memory.get("source") or "").strip()
+    if source:
+        lines.append(f"Memory source: {_human_label(source).capitalize()}.")
+
+    sections = (
+        ("active_focus", "Active focus"),
+        ("open_objectives", "Open objectives and actions"),
+        ("recent_patterns", "Recent patterns"),
+        ("prior_experiments", "Prior tiny experiments"),
+        ("suppressed_assumptions", "Suppressed assumptions to avoid reintroducing"),
+        ("archived_relevant", "Archived but relevant"),
+    )
+    for key, title in sections:
+        items = [
+            item
+            for item in memory.get(key) or ()
+            if isinstance(item, dict)
+        ]
+        if not items:
+            continue
+        labels = []
+        for item in items[:4]:
+            label = (
+                item.get("label")
+                or item.get("try_step")
+                or item.get("text")
+                or item.get("experiment_id")
+                or ""
+            )
+            if not str(label).strip():
+                continue
+            kind = item.get("kind") or item.get("intervention") or item.get("role")
+            kind_text = f" ({_human_label(str(kind))})" if kind else ""
+            labels.append(
+                f"{_compact_preview(str(label), limit=110)}{kind_text}"
+            )
+        if labels:
+            lines.append(f"{title}: " + "; ".join(labels) + ".")
+
+    edges = [
+        item
+        for item in memory.get("supporting_edges") or ()
+        if isinstance(item, dict)
+    ]
+    if edges:
+        lines.append("Memory support paths:")
+        for item in edges[:4]:
+            source_label = _human_label(
+                str(item.get("source_label") or item.get("source_node_id") or "source")
+            )
+            target_label = _human_label(
+                str(item.get("target_label") or item.get("target_node_id") or "target")
+            )
+            kind = _human_label(str(item.get("kind") or "supports"))
+            lines.append(f"- {source_label} -> {kind} -> {target_label}")
+
+    counts = memory.get("counts")
+    if isinstance(counts, dict):
+        nonzero = [
+            f"{_human_label(str(key))}: {value}"
+            for key, value in counts.items()
+            if value
+        ]
+        if nonzero:
+            lines.append("Memory packet counts: " + ", ".join(nonzero) + ".")
+
+    return lines
+
+
 def explain_trace_human_readable(
     trace: dict[str, Any],
     *,
@@ -1576,6 +1921,9 @@ def explain_trace_human_readable(
 
     if evidence_lines := _format_graph_evidence(evidence):
         lines.extend(evidence_lines)
+
+    if memory_lines := _format_memory_used(trace.get("memory")):
+        lines.extend(memory_lines)
 
     if hypotheses:
         grouped = _group_hypotheses(hypotheses)
@@ -3094,6 +3442,7 @@ CHAT_APP_HTML = r"""<!doctype html>
     const progressStages = {
       connecting: { label: "Connecting", value: 8 },
       structured_extraction: { label: "Reading message", value: 28 },
+      memory_retrieval: { label: "Retrieving workspace memory", value: 42 },
       therapeutic_kernel: { label: "Reasoning through options", value: 55 },
       response_plan: { label: "Planning response", value: 76 },
       rendering: { label: "Preparing response", value: 92 },
@@ -4089,6 +4438,7 @@ CHAT_APP_HTML = r"""<!doctype html>
       });
       source.addEventListener("extraction", (event) => appendTrace("extraction", JSON.parse(event.data)));
       source.addEventListener("kernel", (event) => appendTrace("kernel", JSON.parse(event.data)));
+      source.addEventListener("memory", (event) => appendTrace("memory", JSON.parse(event.data)));
       source.addEventListener("policy", (event) => {
         const data = JSON.parse(event.data);
         appendTrace("policy", data);
