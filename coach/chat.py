@@ -177,6 +177,9 @@ Plan constraints:
   discriminating question when the map is genuinely uncertain
 - when the kernel provides clarifying_moves, use the top move as the next
   question if it would reduce uncertainty between plausible formulations
+- when the kernel provides intervention_deliberation, use the selected
+  intervention as the preferred active move and treat the alternatives as
+  counterfactual checks, unless safety or plan coherence requires a change
 - when adaptive policy memory is supplied, treat it as user-specific outcome
   evidence: lightly reuse moves that helped, shrink or soften moves that were
   too hard, and avoid over-trusting a single feedback event
@@ -460,7 +463,9 @@ class KernelGuidedCoach:
             recent_interventions=recent_interventions,
         )
         self.kernel.add_state(state)
-        snapshot = self.kernel.reasoning_snapshot(state.state_id, limit=5)
+        snapshot = with_intervention_deliberation(
+            self.kernel.reasoning_snapshot(state.state_id, limit=5)
+        )
         return PreparedTurn(
             extraction=extraction,
             state=state,
@@ -575,7 +580,9 @@ class DeterministicKernelGuidedCoach:
         )
         self.kernel.add_state(state)
         extraction = extraction_from_state(state)
-        snapshot = self.kernel.reasoning_snapshot(state.state_id, limit=5)
+        snapshot = with_intervention_deliberation(
+            self.kernel.reasoning_snapshot(state.state_id, limit=5)
+        )
         return PreparedTurn(
             extraction=extraction,
             state=state,
@@ -831,6 +838,206 @@ def build_response_prompt(
     )
 
 
+def with_intervention_deliberation(
+    kernel_snapshot: dict[str, Any],
+    *,
+    limit: int = 4,
+) -> dict[str, Any]:
+    """Attach a compact counterfactual intervention deliberation to a snapshot."""
+
+    snapshot = dict(kernel_snapshot)
+    candidates = [dict(item) for item in snapshot.get("candidates") or ()]
+    if not candidates:
+        snapshot["intervention_deliberation"] = {
+            "selected_intervention": None,
+            "runner_up_intervention": None,
+            "candidates_considered": [],
+            "note": "No kernel candidates were available.",
+        }
+        return snapshot
+
+    selected = _select_deliberated_candidate(candidates)
+    runner_up = next(
+        (
+            candidate for candidate in candidates
+            if candidate.get("intervention") != selected.get("intervention")
+            and not candidate.get("contraindications")
+        ),
+        None,
+    )
+    rows = []
+    for candidate in _ordered_deliberation_candidates(candidates, selected, runner_up, limit=limit):
+        role = (
+            "selected"
+            if candidate.get("intervention") == selected.get("intervention")
+            else "runner_up"
+            if runner_up and candidate.get("intervention") == runner_up.get("intervention")
+            else "not_chosen"
+        )
+        rows.append(
+            _deliberation_row(
+                candidate,
+                selected=selected,
+                role=role,
+            )
+        )
+
+    snapshot["intervention_deliberation"] = {
+        "selected_intervention": selected.get("intervention"),
+        "runner_up_intervention": runner_up.get("intervention") if runner_up else None,
+        "selected_reason": _deliberation_selected_reason(selected, candidates),
+        "candidates_considered": rows,
+        "note": (
+            "Counterfactual intervention check: selected the preferred active move, "
+            "then kept alternatives as reasons to avoid or revisit."
+        ),
+    }
+    return snapshot
+
+
+def _select_deliberated_candidate(candidates: list[dict[str, Any]]) -> dict[str, Any]:
+    safe = [candidate for candidate in candidates if not candidate.get("contraindications")]
+    if not safe:
+        return candidates[0]
+    active = [
+        candidate
+        for candidate in safe
+        if candidate.get("intervention") != "validation"
+    ]
+    return active[0] if active else safe[0]
+
+
+def _ordered_deliberation_candidates(
+    candidates: list[dict[str, Any]],
+    selected: dict[str, Any],
+    runner_up: dict[str, Any] | None,
+    *,
+    limit: int,
+) -> list[dict[str, Any]]:
+    ordered = [selected]
+    if runner_up:
+        ordered.append(runner_up)
+    for candidate in candidates:
+        if candidate.get("intervention") in {
+            item.get("intervention") for item in ordered
+        }:
+            continue
+        ordered.append(candidate)
+        if len(ordered) >= limit:
+            break
+    return ordered[:limit]
+
+
+def _deliberation_row(
+    candidate: dict[str, Any],
+    *,
+    selected: dict[str, Any],
+    role: str,
+) -> dict[str, Any]:
+    intervention = str(candidate.get("intervention") or "")
+    possible_patterns = tuple(
+        TherapeuticReasoningKernel().patterns_for_intervention(intervention)
+    )
+    supported_hypotheses = [
+        dict(item)
+        for item in candidate.get("hypotheses") or ()
+        if isinstance(item, dict) and item.get("pattern")
+    ]
+    supported_patterns = _unique_text(
+        str(item.get("pattern"))
+        for item in supported_hypotheses
+        if item.get("pattern")
+    )
+    missing_evidence = tuple(
+        pattern for pattern in possible_patterns
+        if pattern not in set(supported_patterns)
+    )
+    contraindications = tuple(str(item) for item in candidate.get("contraindications") or ())
+    row = {
+        "intervention": intervention,
+        "role": role,
+        "score": candidate.get("score"),
+        "modality": tuple(candidate.get("modality") or ()),
+        "would_fit_if": possible_patterns[:6],
+        "supported_by": supported_hypotheses[:4],
+        "missing_evidence": missing_evidence[:4],
+        "risks": contraindications or _counterfactual_risks(candidate, role=role),
+        "exercise": candidate.get("exercise"),
+    }
+    if role == "selected":
+        row["decision"] = _deliberation_selected_reason(candidate, [candidate])
+    else:
+        row["reason_not_chosen"] = _counterfactual_not_chosen_reason(
+            candidate,
+            selected=selected,
+            missing_evidence=missing_evidence,
+            contraindications=contraindications,
+        )
+    return row
+
+
+def _deliberation_selected_reason(
+    selected: dict[str, Any],
+    candidates: list[dict[str, Any]],
+) -> str:
+    if selected.get("intervention") == "validation":
+        return "Validation was the safest coherent move available."
+    if candidates and candidates[0].get("intervention") == "validation":
+        return "Chosen as the active move after an opening validation stance."
+    return "Chosen as the highest-ranked safe active move."
+
+
+def _counterfactual_risks(candidate: dict[str, Any], *, role: str) -> tuple[str, ...]:
+    intervention = str(candidate.get("intervention") or "")
+    if role == "selected":
+        return ()
+    if intervention == "validation":
+        return ("may validate without creating enough movement",)
+    if "disputation" in intervention:
+        return ("may feel too sharp if shame or distress is high",)
+    if "behavioral" in intervention or "committed_action" in intervention:
+        return ("may jump to action before enough emotional contact",)
+    if "defusion" in intervention:
+        return ("may bypass practical execution if action is the main gap",)
+    return ("less direct fit than the selected intervention",)
+
+
+def _counterfactual_not_chosen_reason(
+    candidate: dict[str, Any],
+    *,
+    selected: dict[str, Any],
+    missing_evidence: tuple[str, ...],
+    contraindications: tuple[str, ...],
+) -> str:
+    if contraindications:
+        return "Blocked or mistimed: " + ", ".join(contraindications[:2])
+    if candidate.get("intervention") == "validation" and selected.get("intervention") != "validation":
+        return "Kept as the opening stance, not the main active step."
+    if missing_evidence:
+        return "Less complete match; missing " + _format_label_text(list(missing_evidence[:2])) + "."
+    return f"Lower ranked than {str(selected.get('intervention')).replace('_', ' ')}."
+
+
+def _unique_text(values: Any) -> list[str]:
+    unique = []
+    seen = set()
+    for value in values:
+        label = str(value).strip()
+        if label and label not in seen:
+            seen.add(label)
+            unique.append(label)
+    return unique
+
+
+def _format_label_text(values: list[str]) -> str:
+    labels = [value.replace("_", " ") for value in _unique_text(values)]
+    if not labels:
+        return "none"
+    if len(labels) == 1:
+        return labels[0]
+    return f"{', '.join(labels[:-1])}, and {labels[-1]}"
+
+
 def _format_focus_context(extraction: ExtractedCoachingState) -> str:
     fields = (
         ("domains", extraction.domains),
@@ -916,6 +1123,22 @@ def format_kernel_snapshot(snapshot: dict[str, Any]) -> str:
             lines.append(f"- {item.get('priority')}: {item.get('kind')} - {item.get('question')}")
             if item.get("target_formulations"):
                 lines.append(f"  targets: {', '.join(item['target_formulations'])}")
+    else:
+        lines.append("- none")
+
+    deliberation = snapshot.get("intervention_deliberation") or {}
+    lines.append("Kernel intervention deliberation:")
+    if deliberation.get("selected_intervention"):
+        lines.append(f"- selected: {deliberation.get('selected_intervention')}")
+        if deliberation.get("runner_up_intervention"):
+            lines.append(f"- runner_up: {deliberation.get('runner_up_intervention')}")
+        for item in deliberation.get("candidates_considered") or ():
+            reason = item.get("decision") or item.get("reason_not_chosen")
+            suffix = f" - {reason}" if reason else ""
+            lines.append(
+                f"  {item.get('role')}: {item.get('intervention')} "
+                f"({item.get('score')}){suffix}"
+            )
     else:
         lines.append("- none")
 
@@ -1278,6 +1501,8 @@ def build_debug_trace(
             "clarifying_moves": clarifying_moves,
             "candidates": candidates,
             "recipes": recipes,
+            "intervention_deliberation": kernel_snapshot.get("intervention_deliberation")
+            or {},
         },
         "selection": {
             "intervention": response_plan.intervention,
@@ -1401,6 +1626,21 @@ def format_debug_trace(trace: dict[str, Any]) -> str:
         for item in recipes:
             steps = " -> ".join(item.get("steps") or ())
             lines.append(f"  {item.get('score')}: {item.get('recipe')} ({steps})")
+    else:
+        lines.append("  none")
+
+    deliberation = kernel.get("intervention_deliberation") or {}
+    lines.append("- intervention deliberation:")
+    if deliberation.get("selected_intervention"):
+        lines.append(f"  selected: {deliberation.get('selected_intervention')}")
+        if deliberation.get("runner_up_intervention"):
+            lines.append(f"  runner_up: {deliberation.get('runner_up_intervention')}")
+        for item in deliberation.get("candidates_considered") or ():
+            reason = item.get("decision") or item.get("reason_not_chosen")
+            suffix = f" - {reason}" if reason else ""
+            lines.append(
+                f"  {item.get('role')}: {item.get('intervention')} ({item.get('score')}){suffix}"
+            )
     else:
         lines.append("  none")
 
@@ -1638,7 +1878,9 @@ def main(argv: list[str] | None = None) -> int:
         kernel = TherapeuticReasoningKernel()
         state = state_from_user_message(message, state_id="dry-run")
         kernel.add_state(state)
-        snapshot = kernel.reasoning_snapshot(state.state_id, limit=5)
+        snapshot = with_intervention_deliberation(
+            kernel.reasoning_snapshot(state.state_id, limit=5)
+        )
         extraction = extraction_from_state(state)
         response_plan = draft_response_plan(snapshot)
         rendered_response = render_response_plan(response_plan)
@@ -1718,7 +1960,13 @@ def draft_response_plan(kernel_snapshot: dict[str, Any]) -> ResponsePlan:
     """Deterministic dry-run plan preview from the top kernel candidate."""
 
     candidates = kernel_snapshot.get("candidates") or []
-    candidate = candidates[0] if candidates else {}
+    deliberation = kernel_snapshot.get("intervention_deliberation") or {}
+    selected_intervention = deliberation.get("selected_intervention")
+    candidate = (
+        _candidate_for_intervention(candidates, selected_intervention)
+        if selected_intervention
+        else None
+    ) or (candidates[0] if candidates else {})
     intervention = candidate.get("intervention")
     exercise = candidate.get("exercise")
     hypotheses = candidate.get("hypotheses") or kernel_snapshot.get("hypotheses") or []

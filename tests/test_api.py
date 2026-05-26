@@ -201,14 +201,15 @@ class ApiSurfaceTests(unittest.TestCase):
         self.assertEqual(200, chat.status_code)
         self.assertNotIn("explanation", before[1])
         self.assertEqual(200, explanation.status_code)
-        self.assertIn("evidence check", explanation.json()["explanation"])
-        self.assertIn("tentative hypotheses", explanation.json()["explanation"])
-        self.assertIn("Differential formulation", explanation.json()["explanation"])
-        self.assertIn("Active inquiry", explanation.json()["explanation"])
-        self.assertIn("Backward check", explanation.json()["explanation"])
-        self.assertIn("what would need to be true", explanation.json()["explanation"])
-        self.assertIn("mind reading", explanation.json()["explanation"])
-        self.assertIn("not a diagnosis", explanation.json()["explanation"])
+        text = explanation.json()["explanation"]
+        self.assertIn("Why this: evidence check", text)
+        self.assertIn("Core tentative hypotheses", text)
+        self.assertIn("Relevant differential formulation", text)
+        self.assertIn("Backward check", text)
+        self.assertIn("Not chosen now", text)
+        self.assertIn("mind reading", text)
+        self.assertIn("not a diagnosis", text)
+        self.assertLessEqual(len(text.splitlines()), 14)
         self.assertIn("explanation", after[1])
 
     def test_trace_explanation_uses_surreal_graph_evidence_when_available(self):
@@ -249,10 +250,11 @@ class ApiSurfaceTests(unittest.TestCase):
         text = explanation.json()["explanation"]
         self.assertIn("Graph evidence", text)
         self.assertIn("Surreal working map", text)
-        self.assertIn("Relevant transcript records", text)
+        self.assertIn("Relevant transcript record", text)
         self.assertIn("They will think I am incompetent", text)
         self.assertIn("Working-map support", text)
-        self.assertIn("Support paths", text)
+        self.assertIn("Support path", text)
+        self.assertLessEqual(len(text.splitlines()), 14)
 
     def test_response_trace_uses_surreal_memory_packet(self):
         backend = SurrealStateBackend(
@@ -312,7 +314,7 @@ class ApiSurfaceTests(unittest.TestCase):
         text = explanation.json()["explanation"]
         self.assertIn("Memory used", text)
         self.assertIn("Memory source: Surreal projection", text)
-        self.assertIn("Active focus", text)
+        self.assertLessEqual(len(text.splitlines()), 16)
 
     def test_trace_explanation_requires_assistant_message(self):
         app = create_app(

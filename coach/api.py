@@ -32,6 +32,7 @@ from .chat import (
     build_response_prompt,
     build_turn_trace,
     read_api_key,
+    with_intervention_deliberation,
 )
 from .experiments import (
     CoachingExperiment,
@@ -1278,6 +1279,7 @@ def _apply_policy_to_prepared(
     adjusted_snapshot, policy_report = policy.apply_to_kernel_snapshot(
         prepared.kernel_snapshot
     )
+    adjusted_snapshot = with_intervention_deliberation(adjusted_snapshot)
     has_policy_report = (
         bool(policy_report.get("adjustments"))
         or not policy_report.get("summary", {}).get("empty", True)
@@ -1938,6 +1940,276 @@ def _format_memory_used(memory: Any) -> list[str]:
     return lines
 
 
+def _core_explanation_context(
+    *,
+    selected_intervention: str,
+    selection: dict[str, Any],
+    selected_candidate: dict[str, Any],
+) -> dict[str, Any]:
+    backward = _backward_justification_report(
+        selected_intervention=selected_intervention,
+        selection=selection,
+        selected_candidate=selected_candidate,
+    )
+    candidate_hypotheses = [
+        item
+        for item in selected_candidate.get("hypotheses") or ()
+        if isinstance(item, dict) and item.get("pattern")
+    ]
+    possible_patterns = (
+        _clean_label_list(backward.get("possible_patterns"))
+        if backward
+        else list(TherapeuticReasoningKernel().patterns_for_intervention(selected_intervention))
+    )
+    possible_set = set(possible_patterns)
+    primary_hypotheses = [
+        item
+        for item in candidate_hypotheses
+        if not possible_set or str(item.get("pattern")) in possible_set
+    ] or candidate_hypotheses
+    core_patterns = _unique_labels(
+        str(item.get("pattern"))
+        for item in primary_hypotheses
+        if item.get("pattern")
+    )
+    if not core_patterns and backward:
+        core_patterns = _clean_label_list(backward.get("satisfied_patterns"))
+    core_patterns = core_patterns[:3]
+    core_hypotheses = [
+        item
+        for item in primary_hypotheses
+        if str(item.get("pattern")) in set(core_patterns)
+    ][:3]
+    label_terms = _core_label_terms(
+        selected_intervention=selected_intervention,
+        core_patterns=core_patterns,
+        core_hypotheses=core_hypotheses,
+    )
+    return {
+        "backward": backward,
+        "core_patterns": core_patterns,
+        "core_hypotheses": core_hypotheses,
+        "label_terms": label_terms,
+    }
+
+
+def _core_label_terms(
+    *,
+    selected_intervention: str,
+    core_patterns: list[str],
+    core_hypotheses: list[dict[str, Any]],
+) -> set[str]:
+    labels = {selected_intervention, *core_patterns}
+    for hypothesis in core_hypotheses:
+        source = str(hypothesis.get("source") or "").strip()
+        pattern = str(hypothesis.get("pattern") or "").strip()
+        if source and pattern:
+            labels.add(f"{source}: {pattern}")
+    terms = set(labels)
+    for label in labels:
+        terms.update(_tokenize_memory_text(label))
+    return {term for term in terms if term}
+
+
+def _best_core_formulation(
+    formulations: list[dict[str, Any]],
+    core_patterns: list[str],
+) -> dict[str, Any] | None:
+    if not formulations or not core_patterns:
+        return None
+    core_set = set(core_patterns)
+    ranked = []
+    for item in formulations:
+        evidence_patterns = {
+            str(hypothesis.get("pattern"))
+            for hypothesis in item.get("evidence") or ()
+            if isinstance(hypothesis, dict) and hypothesis.get("pattern")
+        }
+        overlap = len(core_set & evidence_patterns)
+        if overlap:
+            ranked.append((overlap, item))
+    if not ranked:
+        return None
+    ranked.sort(key=lambda pair: (-pair[0], -(pair[1].get("score") or 0)))
+    return ranked[0][1]
+
+
+def _format_core_graph_evidence(
+    evidence: dict[str, Any] | None,
+    *,
+    label_terms: set[str],
+) -> list[str]:
+    if not evidence:
+        return []
+
+    lines = [
+        "Graph evidence: the Surreal working map had records on this selected path."
+    ]
+
+    messages = [
+        item
+        for item in evidence.get("messages") or ()
+        if isinstance(item, dict) and str(item.get("text") or "").strip()
+    ]
+    if messages:
+        item = next(
+            (
+                message for message in reversed(messages)
+                if str(message.get("role") or "") == "user"
+            ),
+            messages[-1],
+        )
+        role = _human_label(str(item.get("role") or "message"))
+        index = item.get("message_index")
+        text = _compact_preview(str(item.get("text") or ""), limit=150)
+        lines.append(f"Relevant transcript record: message {index} ({role}): {text}")
+
+    nodes = _core_matching_items(
+        evidence.get("supporting_nodes") or (),
+        label_terms=label_terms,
+        label_fields=("label", "node_id"),
+        fallback_limit=3,
+    )
+    if nodes:
+        rendered = []
+        for item in nodes[:3]:
+            kind = _human_label(str(item.get("kind") or "node"))
+            label = _human_label(str(item.get("label") or item.get("node_id") or "item"))
+            rendered.append(f"{label} ({kind})")
+        lines.append("Working-map support: " + "; ".join(rendered) + ".")
+
+    edges = _core_matching_items(
+        evidence.get("support_edges") or (),
+        label_terms=label_terms,
+        label_fields=("source_label", "target_label", "kind"),
+        fallback_limit=1,
+    )
+    if edges:
+        item = edges[0]
+        source = _human_label(str(item.get("source_label") or item.get("source_node_id") or "source"))
+        target = _human_label(str(item.get("target_label") or item.get("target_node_id") or "target"))
+        kind = _human_label(str(item.get("kind") or "supports"))
+        lines.append(f"Support path: {source} -> {kind} -> {target}.")
+
+    return lines
+
+
+def _format_core_memory_used(
+    memory: Any,
+    *,
+    label_terms: set[str],
+) -> list[str]:
+    if not isinstance(memory, dict):
+        return []
+
+    lines = []
+    source = str(memory.get("source") or "").strip()
+    if source:
+        lines.append(f"Memory source: {_human_label(source).capitalize()}.")
+
+    selected_items = []
+    for key in ("recent_patterns", "open_objectives", "active_focus", "prior_experiments"):
+        selected_items.extend(
+            (key, item)
+            for item in _core_matching_items(
+                memory.get(key) or (),
+                label_terms=label_terms,
+                label_fields=("label", "try_step", "pattern", "intervention", "text"),
+                fallback_limit=0,
+            )
+        )
+        if len(selected_items) >= 2:
+            break
+
+    if not selected_items:
+        return lines
+
+    labels = []
+    for key, item in selected_items[:2]:
+        label = (
+            item.get("label")
+            or item.get("try_step")
+            or item.get("pattern")
+            or item.get("intervention")
+            or item.get("text")
+            or key
+        )
+        labels.append(_compact_preview(str(label), limit=110))
+    lines.append("Memory used: " + "; ".join(labels) + ".")
+    return lines
+
+
+def _selected_deliberation_item(
+    deliberation: dict[str, Any],
+    selected_intervention: str,
+) -> dict[str, Any] | None:
+    for item in deliberation.get("candidates_considered") or ():
+        if (
+            isinstance(item, dict)
+            and item.get("intervention") == selected_intervention
+        ):
+            return item
+    return None
+
+
+def _runner_up_deliberation_item(
+    deliberation: dict[str, Any],
+    selected_intervention: str,
+) -> dict[str, Any] | None:
+    for item in deliberation.get("candidates_considered") or ():
+        if not isinstance(item, dict):
+            continue
+        if item.get("intervention") == selected_intervention:
+            continue
+        if item.get("role") == "runner_up":
+            return item
+    for item in deliberation.get("candidates_considered") or ():
+        if isinstance(item, dict) and item.get("intervention") != selected_intervention:
+            return item
+    return None
+
+
+def _core_matching_items(
+    items: Any,
+    *,
+    label_terms: set[str],
+    label_fields: tuple[str, ...],
+    fallback_limit: int,
+) -> list[dict[str, Any]]:
+    records = [item for item in items if isinstance(item, dict)]
+    matches = [
+        item
+        for item in records
+        if _item_matches_terms(item, label_terms=label_terms, label_fields=label_fields)
+    ]
+    if matches or fallback_limit <= 0:
+        return matches
+    return records[:fallback_limit]
+
+
+def _item_matches_terms(
+    item: dict[str, Any],
+    *,
+    label_terms: set[str],
+    label_fields: tuple[str, ...],
+) -> bool:
+    haystacks = [
+        str(item.get(field) or "").casefold()
+        for field in label_fields
+        if item.get(field)
+    ]
+    if not haystacks:
+        return False
+    for label in label_terms:
+        lowered = label.casefold()
+        if lowered and any(lowered in haystack for haystack in haystacks):
+            return True
+    item_terms = set()
+    for haystack in haystacks:
+        item_terms.update(_tokenize_memory_text(haystack))
+    return bool(item_terms & label_terms)
+
+
 def explain_trace_human_readable(
     trace: dict[str, Any],
     *,
@@ -1948,10 +2220,10 @@ def explain_trace_human_readable(
     extraction = trace.get("extraction") or {}
     kernel = trace.get("kernel") or {}
     selection = trace.get("selection") or {}
-    hypotheses = kernel.get("hypotheses") or []
     formulations = kernel.get("formulations") or []
     clarifying_moves = kernel.get("clarifying_moves") or []
     candidates = kernel.get("candidates") or []
+    deliberation = kernel.get("intervention_deliberation") or {}
     selected = selection.get("matched_candidate") or {}
     selected_intervention = (
         selection.get("intervention")
@@ -1959,48 +2231,74 @@ def explain_trace_human_readable(
         or "the selected intervention"
     )
 
-    lines = [
-        f"The assistant used {_human_label(str(selected_intervention))} because the structured state pointed in that direction.",
-    ]
+    core = _core_explanation_context(
+        selected_intervention=str(selected_intervention),
+        selection=selection,
+        selected_candidate=selected,
+    )
+    core_patterns = core["core_patterns"]
+    core_hypotheses = core["core_hypotheses"]
+    backward = core["backward"]
+    label_terms = core["label_terms"]
+
+    lines = [f"Why this: {_human_label(str(selected_intervention))}."]
 
     observations = _observation_summary(extraction)
     if observations:
-        lines.append(f"It noticed {observations}.")
+        lines.append(f"Latest signal: {observations}.")
 
-    if evidence_lines := _format_graph_evidence(evidence):
-        lines.extend(evidence_lines)
-
-    if memory_lines := _format_memory_used(trace.get("memory")):
-        lines.extend(memory_lines)
-
-    if hypotheses:
-        grouped = _group_hypotheses(hypotheses)
-        lines.append("The kernel treated these as tentative hypotheses, not labels:")
-        for source, patterns in grouped:
-            lines.append(f"- {_source_label(source)}: {_format_labels(patterns)}.")
-
-    if formulations:
-        lines.append(
-            "Differential formulation: the kernel kept multiple possible maps active instead of treating one as certain."
+    if core_patterns:
+        sources = _unique_labels(
+            _source_label(str(item.get("source") or "kernel"))
+            for item in core_hypotheses
         )
-        for item in formulations[:3]:
-            label = _human_label(str(item.get("label") or item.get("formulation")))
-            evidence = [
-                str(hypothesis.get("pattern"))
-                for hypothesis in (item.get("evidence") or ())
-                if hypothesis.get("pattern")
-            ]
-            evidence_text = (
-                f" Supported by {_format_labels(evidence[:5])}."
-                if evidence
-                else ""
-            )
-            question = str(item.get("discriminating_question") or "").strip()
-            question_text = f" It would check: {question}" if question else ""
+        source_text = f" ({', '.join(sources)})" if sources else ""
+        lines.append(
+            "Core tentative hypotheses"
+            f"{source_text}: {_format_labels(core_patterns)}."
+        )
+
+    if backward:
+        possible_patterns = _clean_label_list(backward.get("possible_patterns"))
+        coherent_scope = [
+            pattern for pattern in possible_patterns if not core_patterns or pattern in core_patterns
+        ] or possible_patterns[:2]
+        if coherent_scope:
             lines.append(
-                f"- {label} ({item.get('score')}): {item.get('summary') or ''}"
-                f"{evidence_text}{question_text}"
+                "Backward check: the kernel says this move fits states involving "
+                f"{_format_labels(coherent_scope[:3])}."
             )
+
+    selected_deliberation = _selected_deliberation_item(
+        deliberation,
+        str(selected_intervention),
+    )
+    if selected_deliberation:
+        decision = str(selected_deliberation.get("decision") or "").strip()
+        if decision:
+            lines.append(f"Deliberation: {decision}")
+
+    runner_up = _runner_up_deliberation_item(
+        deliberation,
+        str(selected_intervention),
+    )
+    if runner_up:
+        reason = str(runner_up.get("reason_not_chosen") or "").strip()
+        if reason:
+            lines.append(
+                "Not chosen now: "
+                f"{_human_label(str(runner_up.get('intervention') or 'alternative'))} — "
+                f"{reason}"
+            )
+
+    core_formulation = _best_core_formulation(formulations, core_patterns)
+    if core_formulation:
+        label = _human_label(str(core_formulation.get("label") or core_formulation.get("formulation")))
+        summary = _compact_preview(str(core_formulation.get("summary") or ""), limit=150)
+        if summary:
+            lines.append(f"Relevant differential formulation: {label}: {summary}")
+        else:
+            lines.append(f"Relevant differential formulation: {label}.")
 
     selected_clarifier = selection.get("clarifying_move") or (
         clarifying_moves[0] if clarifying_moves else None
@@ -2014,108 +2312,42 @@ def explain_trace_human_readable(
             if targets
             else ""
         )
-        lines.append(
-            "Active inquiry: the kernel proposed a clarifying move"
-            f"{target_text}."
-        )
-        if rationale := str(selected_clarifier.get("rationale") or "").strip():
-            lines.append(f"Clarifying rationale: {rationale}")
-        if question := str(selected_clarifier.get("question") or "").strip():
-            lines.append(f"Clarifying question: {question}")
-
-    if candidates:
-        top_candidates = [
-            f"{_human_label(str(item.get('intervention')))}"
-            + (
-                f" ({item.get('score')})"
-                if item.get("score") is not None
-                else ""
+        question = str(selected_clarifier.get("question") or "").strip()
+        selected_question = str(selection.get("question") or "").strip()
+        if question and question != selected_question:
+            lines.append(
+                "Active inquiry: the kernel kept one clarifying question"
+                f"{target_text}: {question}"
             )
-            for item in candidates[:3]
-        ]
-        lines.append(
-            "It then ranked safe candidates: "
-            f"{', '.join(top_candidates)}."
-        )
+
+    if evidence_lines := _format_core_graph_evidence(evidence, label_terms=label_terms):
+        lines.extend(evidence_lines)
+
+    if memory_lines := _format_core_memory_used(trace.get("memory"), label_terms=label_terms):
+        lines.extend(memory_lines)
 
     policy = trace.get("policy") or {}
     if policy:
         adjustments = policy.get("adjustments") or []
-        summary = policy.get("summary") or {}
-        if adjustments:
+        selected_adjustment = next(
+            (
+                item for item in adjustments
+                if item.get("intervention") == selected_intervention
+            ),
+            None,
+        )
+        if selected_adjustment:
             lines.append(
-                "Adaptive policy: prior feedback nudged this turn's ranking."
+                "Adaptive policy: prior feedback adjusted this move's score to "
+                f"{selected_adjustment.get('adjusted_score')}."
             )
-            for item in adjustments[:4]:
-                intervention = _human_label(str(item.get("intervention") or "move"))
-                delta = item.get("delta")
-                reasons = [
-                    str(reason)
-                    for reason in (item.get("reasons") or ())
-                    if str(reason).strip()
-                ]
-                reason_text = f" {reasons[0]}" if reasons else ""
-                lines.append(
-                    f"- {intervention}: score {item.get('base_score')} -> "
-                    f"{item.get('adjusted_score')} ({delta:+}).{reason_text}"
-                )
-        counts = summary.get("counts") or {}
-        if counts and (
-            counts.get("experiment_outcomes") or counts.get("map_corrections")
-        ):
-            lines.append(
-                "Policy facts available: "
-                f"{counts.get('experiment_outcomes', 0)} experiment outcomes and "
-                f"{counts.get('map_corrections', 0)} working-map corrections."
-            )
-
-    if selected:
-        reasons = selected.get("hypotheses") or []
-        patterns = [
-            str(item.get("pattern"))
-            for item in reasons
-            if item.get("pattern")
-        ]
-        if patterns:
-            lines.append(
-                f"The chosen move was supported by {_format_labels(patterns)}."
-            )
-
-    recipe = selection.get("recipe") or {}
-    if recipe:
-        steps = [_human_label(str(step)) for step in recipe.get("steps") or ()]
-        if steps:
-            lines.append(
-                "The kernel also generated a recipe-level plan: "
-                f"{_human_label(str(recipe.get('recipe')))} = {' -> '.join(steps)}."
-            )
-        if rationale := recipe.get("rationale"):
-            lines.append(f"Recipe rationale: {rationale}")
 
     coherence = trace.get("plan_coherence") or {}
     if coherence:
-        lines.append(
-            "Plan coherence check: "
-            f"{_human_label(str(coherence.get('status') or 'checked'))}."
-        )
-        for issue in (coherence.get("issues") or [])[:4]:
-            detail = str(issue.get("detail") or "").strip()
-            if detail:
-                lines.append(
-                    f"- {_human_label(str(issue.get('code') or 'issue'))}: {detail}"
-                )
-        for repair in (coherence.get("repairs") or [])[:4]:
+        for repair in (coherence.get("repairs") or [])[:1]:
             detail = str(repair.get("detail") or "").strip()
             if detail:
-                lines.append(f"- Repair: {detail}")
-
-    backward = _backward_justification_report(
-        selected_intervention=str(selected_intervention),
-        selection=selection,
-        selected_candidate=selected,
-    )
-    if backward:
-        lines.extend(_format_backward_justification(backward))
+                lines.append(f"Plan coherence repair: {detail}")
 
     if exercise := selection.get("exercise"):
         lines.append(f"The concrete exercise came from that intervention: {exercise}")
@@ -2123,20 +2355,9 @@ def explain_trace_human_readable(
     if question := selection.get("question"):
         lines.append(f"The follow-up question was meant to keep the next step small: {question}")
 
-    longitudinal_patterns = trace.get("longitudinal") or []
-    if longitudinal_patterns:
-        lines.append("Across turns, the longitudinal detector is also holding these lightly:")
-        for pattern in longitudinal_patterns[:3]:
-            label = _human_label(str(pattern.get("label") or pattern.get("pattern")))
-            turns = pattern.get("turns") or []
-            turn_text = f" across turns {', '.join(str(turn) for turn in turns)}" if turns else ""
-            description = str(pattern.get("description") or "").strip()
-            suffix = f": {description}" if description else ""
-            lines.append(f"- {label}{turn_text}{suffix}")
-
     contraindications = [
         str(reason)
-        for item in candidates
+        for item in ([selected] if selected else candidates[:1])
         for reason in (item.get("contraindications") or [])
     ]
     if contraindications:

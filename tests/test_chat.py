@@ -25,6 +25,7 @@ from coach.chat import (
     read_api_key,
     state_from_extraction,
     state_from_user_message,
+    with_intervention_deliberation,
 )
 from coach.formulation import FormulationGraph
 from coach.therapeutic_kernel import TherapeuticReasoningKernel
@@ -267,6 +268,7 @@ class ChatWorkflowTests(unittest.TestCase):
         self.assertIn("Therapeutic kernel output", prompt)
         self.assertIn("concerns, tasks, challenges, objectives, stakes, and domains", RESPONSE_PLAN_INSTRUCTIONS)
         self.assertIn("make the exercise name that", RESPONSE_PLAN_INSTRUCTIONS)
+        self.assertIn("intervention_deliberation", RESPONSE_PLAN_INSTRUCTIONS)
 
     def test_response_plan_can_be_rendered_and_inspected(self):
         plan = ResponsePlan(
@@ -572,8 +574,40 @@ class ChatWorkflowTests(unittest.TestCase):
         self.assertIn("clarifying moves", formatted)
         self.assertIn("kernel candidates", formatted)
         self.assertIn("kernel recipes", formatted)
+        self.assertIn("intervention deliberation", formatted)
+        self.assertIn("intervention_deliberation", trace["kernel"])
         self.assertIn("matched_candidate_score", formatted)
         self.assertIn("matched_recipe", formatted)
+
+    def test_intervention_deliberation_selects_active_move_and_keeps_counterfactuals(self):
+        snapshot = with_intervention_deliberation(
+            {
+                "hypotheses": [],
+                "candidates": [
+                    {
+                        "intervention": "validation",
+                        "score": 8.0,
+                        "modality": ("common_factors",),
+                        "hypotheses": [{"source": "policy", "pattern": "needs_validation"}],
+                        "exercise": None,
+                    },
+                    {
+                        "intervention": "cognitive_defusion",
+                        "score": 5.0,
+                        "modality": ("act",),
+                        "hypotheses": [{"source": "act", "pattern": "fusion"}],
+                        "exercise": "Try saying: I am noticing the thought.",
+                    },
+                ],
+            }
+        )
+        deliberation = snapshot["intervention_deliberation"]
+
+        self.assertEqual("cognitive_defusion", deliberation["selected_intervention"])
+        self.assertEqual("validation", deliberation["runner_up_intervention"])
+        self.assertEqual("selected", deliberation["candidates_considered"][0]["role"])
+        self.assertEqual("runner_up", deliberation["candidates_considered"][1]["role"])
+        self.assertIn("reason_not_chosen", deliberation["candidates_considered"][1])
 
     def test_response_prompt_can_include_longitudinal_context(self):
         extraction = ExtractedCoachingState(emotions=("anxiety",))
