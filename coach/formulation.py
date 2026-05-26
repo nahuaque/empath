@@ -1016,6 +1016,17 @@ class CaseMemory:
         node.provenance = _append_provenance(node.provenance, feedback_provenance)
         return FormulationFeedbackResult(node=node.model_copy(deep=True), graph=self.snapshot())
 
+    def clear(self) -> FormulationGraph:
+        """Reset the working formulation while preserving memory configuration."""
+
+        self.turn_count = 0
+        self._nodes = {}
+        self._edges = {}
+        self._recent_interventions = []
+        self._turn_records = []
+        self._longitudinal_patterns = ()
+        return self.snapshot()
+
     def compact(self) -> FormulationGraph:
         """Archive stale and low-priority map items while keeping provenance."""
 

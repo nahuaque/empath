@@ -158,6 +158,26 @@ class FormulationFeedbackResponse(BaseModel):
     policy: dict[str, Any] = Field(default_factory=dict)
 
 
+class FormulationClearRequest(BaseModel):
+    """Request to reset a workspace working map."""
+
+    session_id: str | None = Field(default=None, min_length=1, max_length=128)
+    user_id: str = Field(default=DEFAULT_USER_ID, min_length=1, max_length=128)
+    workspace_id: str = Field(default=DEFAULT_WORKSPACE_ID, min_length=1, max_length=128)
+    conversation_id: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+class FormulationClearResponse(BaseModel):
+    """API response after clearing a workspace working map."""
+
+    session_id: str
+    user_id: str = DEFAULT_USER_ID
+    workspace_id: str = DEFAULT_WORKSPACE_ID
+    conversation_id: str | None = None
+    formulation: FormulationGraph = Field(default_factory=FormulationGraph)
+    policy: dict[str, Any] = Field(default_factory=dict)
+
+
 class FormulationMirrorResponse(BaseModel):
     """Reflective playback of the working formulation."""
 
@@ -759,6 +779,33 @@ def create_app(
             ).model_dump()
         )
 
+    async def formulation_clear(request: Request) -> JSONResponse:
+        try:
+            payload = FormulationClearRequest.model_validate(await request.json())
+        except ValidationError as exc:
+            return JSONResponse({"detail": exc.errors()}, status_code=422)
+        except json.JSONDecodeError:
+            return JSONResponse({"detail": "Invalid JSON body."}, status_code=400)
+
+        workspace_scope = await store.get_workspace(
+            user_id=payload.user_id,
+            workspace_id=payload.workspace_id,
+        )
+        async with workspace_scope.workspace.lock:  # type: ignore[arg-type]
+            graph = workspace_scope.workspace.memory.clear()
+            policy = workspace_scope.workspace.policy.summary()
+        await store.save()
+        return JSONResponse(
+            FormulationClearResponse(
+                session_id=payload.conversation_id or payload.session_id or "",
+                user_id=workspace_scope.user_id,
+                workspace_id=workspace_scope.workspace_id,
+                conversation_id=payload.conversation_id or payload.session_id,
+                formulation=graph,
+                policy=policy,
+            ).model_dump()
+        )
+
     async def formulation_mirror(request: Request) -> JSONResponse:
         try:
             params = _query_conversation_scope(request)
@@ -1069,6 +1116,7 @@ def create_app(
             Route("/api/formulation/compaction", formulation_compaction, methods=["GET"]),
             Route("/api/formulation/mirror", formulation_mirror, methods=["GET"]),
             Route("/api/formulation/feedback", formulation_feedback, methods=["POST"]),
+            Route("/api/formulation/clear", formulation_clear, methods=["POST"]),
             Route("/api/experiments", experiments, methods=["GET"]),
             Route("/api/experiments/feedback", experiment_feedback, methods=["POST"]),
         ],
@@ -3148,6 +3196,28 @@ CHAT_APP_HTML = r"""<!doctype html>
       font-size: 12px;
       font-weight: 750;
     }
+    .map-head-actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    button.clear-map-button {
+      width: auto;
+      min-width: 64px;
+      height: 34px;
+      padding: 0 10px;
+      border: 1px solid #c6d7d1;
+      background: #ffffff;
+      color: #35534b;
+      font-size: 12px;
+      font-weight: 750;
+    }
+    button.clear-map-button:hover {
+      background: #eef4f0;
+      color: var(--accent-strong);
+    }
     .map-empty {
       color: var(--muted);
       font-size: 13px;
@@ -3376,7 +3446,10 @@ CHAT_APP_HTML = r"""<!doctype html>
             <h3>Working Map</h3>
             <span class="map-summary" id="mapSummary">Empty</span>
           </div>
-          <button class="mirror-button" id="mirrorMap" type="button" disabled>Reflective listening</button>
+          <div class="map-head-actions">
+            <button class="clear-map-button" id="clearMap" type="button" disabled>Clear</button>
+            <button class="mirror-button" id="mirrorMap" type="button" disabled>Reflective listening</button>
+          </div>
         </div>
         <section class="map-section policy-section" id="policySummary" hidden></section>
         <div class="map-list" id="formulationMap"></div>
@@ -3430,6 +3503,7 @@ CHAT_APP_HTML = r"""<!doctype html>
     const policySummary = document.getElementById("policySummary");
     const mapSummary = document.getElementById("mapSummary");
     const mirrorMap = document.getElementById("mirrorMap");
+    const clearMap = document.getElementById("clearMap");
     const progressToast = document.getElementById("progressToast");
     const progressLabel = document.getElementById("progressLabel");
     const progressPercent = document.getElementById("progressPercent");
@@ -3924,6 +3998,7 @@ CHAT_APP_HTML = r"""<!doctype html>
         ? `${nodes.length} active · turn ${formulationGraph.turn_count || 0}${archivedCount ? ` · ${archivedCount} archived` : ""}`
         : "Empty";
       mirrorMap.disabled = !nodes.length;
+      clearMap.disabled = !nodes.length;
       formulationMap.textContent = "";
       if (!nodes.length) {
         const empty = document.createElement("div");
@@ -4213,6 +4288,32 @@ CHAT_APP_HTML = r"""<!doctype html>
       }
     }
 
+    async function clearWorkingMap() {
+      if (clearMap.disabled) return;
+      if (!confirm("Clear the Working Map? Chat history will stay in place.")) return;
+      clearMap.disabled = true;
+      mirrorMap.disabled = true;
+      setStatus("Clearing map");
+      try {
+        const response = await fetch("/api/formulation/clear", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(scopedBody({})),
+        });
+        if (!response.ok) throw new Error("Unable to clear the working map.");
+        const data = await response.json();
+        renderFormulation(data.formulation || { turn_count: 0, nodes: [], edges: [] });
+        renderPolicy(data.policy || policyMemory);
+        setStatus("Ready");
+      } catch (error) {
+        setStatus("Error");
+        const nodes = (formulationGraph.nodes || [])
+          .filter((node) => !["archived", "rejected", "removed"].includes(node.status));
+        clearMap.disabled = !nodes.length;
+        mirrorMap.disabled = !nodes.length;
+      }
+    }
+
     function renderExplanation(wrap, text) {
       let panel = wrap.querySelector(".trace-explanation");
       if (!panel) {
@@ -4373,6 +4474,7 @@ CHAT_APP_HTML = r"""<!doctype html>
     traceTab.addEventListener("click", () => showInspector("trace"));
     mapTab.addEventListener("click", () => showInspector("map"));
     mirrorMap.addEventListener("click", requestReflectiveListening);
+    clearMap.addEventListener("click", clearWorkingMap);
     formulationMap.addEventListener("click", async (event) => {
       const button = event.target.closest("button[data-action]");
       if (!button) return;

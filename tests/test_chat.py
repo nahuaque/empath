@@ -1,12 +1,14 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from coach.chat import (
     DEFAULT_MODEL,
     EXTRACTION_INSTRUCTIONS,
     ExtractedCoachingState,
     KernelGuidedCoach,
+    MirrorResponse,
     RESPONSE_PLAN_INSTRUCTIONS,
     ResponsePlan,
     TextFeatureExtraction,
@@ -24,6 +26,7 @@ from coach.chat import (
     state_from_extraction,
     state_from_user_message,
 )
+from coach.formulation import FormulationGraph
 from coach.therapeutic_kernel import TherapeuticReasoningKernel
 
 
@@ -42,6 +45,18 @@ class _FakeAgent:
 
     def run_sync(self, prompt, **kwargs):
         self.calls.append((prompt, kwargs))
+        return _FakeRunResult(self.output)
+
+
+class _FlakyAgent(_FakeAgent):
+    def __init__(self, output, *, fail_times):
+        super().__init__(output)
+        self.fail_times = fail_times
+
+    def run_sync(self, prompt, **kwargs):
+        self.calls.append((prompt, kwargs))
+        if len(self.calls) <= self.fail_times:
+            raise RuntimeError("transient model failure")
         return _FakeRunResult(self.output)
 
 
@@ -629,6 +644,32 @@ class ChatWorkflowTests(unittest.TestCase):
         self.assertIn("Adaptive policy memory", prompt)
         self.assertIn("cognitive defusion helped", prompt)
         self.assertIn("adaptive policy memory", RESPONSE_PLAN_INSTRUCTIONS)
+
+    def test_mirror_generation_retries_transient_agent_failure(self):
+        coach = KernelGuidedCoach.__new__(KernelGuidedCoach)
+        coach.mirror_agent = _FlakyAgent(
+            MirrorResponse(text="Here is the LLM reflective listening pass."),
+            fail_times=1,
+        )
+
+        with patch("coach.chat.time.sleep", return_value=None):
+            mirror = coach.mirror_formulation(FormulationGraph(turn_count=2))
+
+        self.assertEqual("Here is the LLM reflective listening pass.", mirror.text)
+        self.assertEqual(2, len(coach.mirror_agent.calls))
+
+    def test_mirror_generation_does_not_use_deterministic_fallback_after_retries(self):
+        coach = KernelGuidedCoach.__new__(KernelGuidedCoach)
+        coach.mirror_agent = _FlakyAgent(
+            MirrorResponse(text="This should not be returned."),
+            fail_times=3,
+        )
+
+        with patch("coach.chat.time.sleep", return_value=None):
+            with self.assertRaises(RuntimeError):
+                coach.mirror_formulation(FormulationGraph(turn_count=2))
+
+        self.assertEqual(3, len(coach.mirror_agent.calls))
 
 
 if __name__ == "__main__":

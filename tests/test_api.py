@@ -83,6 +83,10 @@ class ApiSurfaceTests(unittest.TestCase):
         self.assertIn("/api/experiments/feedback", page.text)
         self.assertIn('source.addEventListener("experiment"', page.text)
         self.assertIn("Working Map", page.text)
+        self.assertIn("Clear", page.text)
+        self.assertIn("/api/formulation/clear", page.text)
+        self.assertIn("clearWorkingMap", page.text)
+        self.assertIn("clearMap", page.text)
         self.assertIn("Reflective listening", page.text)
         self.assertIn("What this is about", page.text)
         self.assertIn("Direction", page.text)
@@ -1089,6 +1093,36 @@ class ApiSurfaceTests(unittest.TestCase):
         self.assertEqual("confirmed", response.json()["result"]["node"]["status"])
         self.assertIn("policy", response.json())
         self.assertEqual(1, response.json()["policy"]["counts"]["map_corrections"])
+
+    def test_formulation_clear_resets_working_map_but_keeps_transcript(self):
+        app = create_app(
+            coach_factory=DeterministicKernelGuidedCoach,
+            dry_run=True,
+        )
+        client = TestClient(app)
+        client.post(
+            "/api/chat",
+            json={
+                "session_id": "clear-map-session",
+                "message": "They will think I am incompetent.",
+            },
+        )
+
+        response = client.post(
+            "/api/formulation/clear",
+            json={"session_id": "clear-map-session"},
+        )
+        session = client.get(
+            "/api/chat/session",
+            params={"session_id": "clear-map-session"},
+        )
+
+        self.assertEqual(200, response.status_code)
+        self.assertEqual([], response.json()["formulation"]["nodes"])
+        self.assertEqual([], response.json()["formulation"]["edges"])
+        self.assertEqual(0, response.json()["formulation"]["turn_count"])
+        self.assertEqual(["user", "assistant"], [item["role"] for item in session.json()["messages"]])
+        self.assertEqual([], session.json()["formulation"]["nodes"])
 
     def test_formulation_mirror_reflects_working_map(self):
         app = create_app(

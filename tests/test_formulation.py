@@ -65,6 +65,25 @@ class CaseMemoryTests(unittest.TestCase):
         self.assertEqual(2, node.seen_count)
         self.assertIn("recurring", delta.summary)
 
+    def test_memory_clear_resets_graph_and_recent_interventions(self):
+        memory = CaseMemory()
+        extraction = ExtractedCoachingState(
+            thoughts=("They will think I am incompetent.",),
+            behaviors=("avoidance",),
+        )
+        plan = ResponsePlan(
+            validation="That makes sense.",
+            intervention="acceptance_committed_action",
+        )
+
+        memory.apply_turn(extraction=extraction, kernel_snapshot={}, response_plan=plan)
+        cleared = memory.clear()
+
+        self.assertEqual(0, cleared.turn_count)
+        self.assertEqual((), cleared.nodes)
+        self.assertEqual((), cleared.edges)
+        self.assertEqual((), memory.recent_interventions())
+
     def test_memory_tracks_focus_context_nodes_and_edges(self):
         memory = CaseMemory()
         extraction = ExtractedCoachingState(

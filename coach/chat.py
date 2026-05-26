@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 import re
 import sys
+import time
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -22,6 +23,8 @@ from .therapeutic_kernel import CoachingState, TherapeuticReasoningKernel
 
 DEFAULT_MODEL = "deepseek-v4-flash"
 DEFAULT_API_KEY_FILE = ".deepseek_api_key"
+DEFAULT_AGENT_RETRY_ATTEMPTS = 3
+DEFAULT_AGENT_RETRY_BACKOFF_SECONDS = 0.35
 
 
 EXTRACTION_INSTRUCTIONS = """\
@@ -362,6 +365,31 @@ class ChatTurnResult:
     message_history: list[ModelMessage]
 
 
+def _run_agent_sync_with_retries(
+    agent: Any,
+    prompt: str,
+    *,
+    attempts: int = DEFAULT_AGENT_RETRY_ATTEMPTS,
+    backoff_seconds: float = DEFAULT_AGENT_RETRY_BACKOFF_SECONDS,
+    **kwargs: Any,
+) -> Any:
+    """Run a Pydantic AI agent with bounded retries for transient provider errors."""
+
+    attempts = max(1, attempts)
+    last_error: Exception | None = None
+    for attempt in range(attempts):
+        try:
+            return agent.run_sync(prompt, **kwargs)
+        except Exception as exc:
+            last_error = exc
+            if attempt >= attempts - 1:
+                break
+            time.sleep(backoff_seconds * (2**attempt))
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("Agent call failed without an exception.")
+
+
 class KernelGuidedCoach:
     """Runs extraction, the therapeutic kernel, then response planning."""
 
@@ -420,7 +448,10 @@ class KernelGuidedCoach:
     ) -> PreparedTurn:
         self._turn_index += 1
         extraction_prompt = build_extraction_prompt(user_message)
-        extraction_result = self.extractor_agent.run_sync(extraction_prompt)
+        extraction_result = _run_agent_sync_with_retries(
+            self.extractor_agent,
+            extraction_prompt,
+        )
         extraction = extraction_result.output
         state = state_from_extraction(
             extraction,
@@ -483,7 +514,8 @@ class KernelGuidedCoach:
         *,
         message_history: list[ModelMessage] | None = None,
     ) -> ChatTurnResult:
-        result = self.response_agent.run_sync(
+        result = _run_agent_sync_with_retries(
+            self.response_agent,
             prepared.response_prompt,
             message_history=message_history,
         )
@@ -506,7 +538,10 @@ class KernelGuidedCoach:
 
     def mirror_formulation(self, graph: FormulationGraph) -> FormulationMirror:
         draft = mirror_formulation(graph)
-        result = self.mirror_agent.run_sync(build_mirror_prompt(graph, draft))
+        result = _run_agent_sync_with_retries(
+            self.mirror_agent,
+            build_mirror_prompt(graph, draft),
+        )
         return FormulationMirror(
             text=_clean_plan_text(result.output.text) or draft.text,
             graph_turn=graph.turn_count,
