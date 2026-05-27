@@ -8,9 +8,9 @@ import unittest
 import anyio
 from starlette.testclient import TestClient
 
-from coach.api import ChatMessage, _local_conversation_context, create_app as create_coach_app
-from coach.chat import DeterministicKernelGuidedCoach
-from coach.storage import SurrealStateBackend
+from empath.api import ChatMessage, _local_conversation_context, create_app as create_empath_app
+from empath.chat import DeterministicKernelGuidedCoach
+from empath.storage import SurrealStateBackend
 
 
 def create_app(*args: Any, **kwargs: Any):
@@ -20,7 +20,7 @@ def create_app(*args: Any, **kwargs: Any):
         and "state_file" not in kwargs
     ):
         kwargs["store_backend"] = "memory"
-    return create_coach_app(*args, **kwargs)
+    return create_empath_app(*args, **kwargs)
 
 
 class DictStateBackend:
@@ -56,7 +56,7 @@ class ApiSurfaceTests(unittest.TestCase):
         self.assertEqual("sse", health.json()["transport"])
         self.assertEqual("memory", health.json()["state_backend"])
         self.assertEqual(200, page.status_code)
-        self.assertIn("Coach Chat", page.text)
+        self.assertIn("Empath Chat", page.text)
         self.assertIn("EventSource", page.text)
         self.assertIn("loadSession", page.text)
         self.assertIn("newChat", page.text)
@@ -78,6 +78,10 @@ class ApiSurfaceTests(unittest.TestCase):
         self.assertIn("max-height: calc(100dvh - 170px)", page.text)
         self.assertIn("experiment-card", page.text)
         self.assertIn("message-actions", page.text)
+        self.assertIn("user-turn-actions", page.text)
+        self.assertIn("data-user-turn-action", page.text)
+        self.assertIn("retryUserTurn", page.text)
+        self.assertIn("/api/chat/retry", page.text)
         self.assertIn("data-experiment-toggle", page.text)
         self.assertIn("toggleExperiment", page.text)
         self.assertIn("/api/experiments/feedback", page.text)
@@ -215,7 +219,7 @@ class ApiSurfaceTests(unittest.TestCase):
     def test_trace_explanation_uses_surreal_graph_evidence_when_available(self):
         backend = SurrealStateBackend(
             url="mem://",
-            namespace="coach_api_test",
+            namespace="empath_api_test",
             database="evidence",
             record_id="app_state:explain",
         )
@@ -259,7 +263,7 @@ class ApiSurfaceTests(unittest.TestCase):
     def test_response_trace_uses_surreal_memory_packet(self):
         backend = SurrealStateBackend(
             url="mem://",
-            namespace="coach_api_test",
+            namespace="empath_api_test",
             database="memory_packet",
             record_id="app_state:memory",
         )
@@ -374,6 +378,75 @@ class ApiSurfaceTests(unittest.TestCase):
         self.assertEqual(["user", "assistant", "user", "assistant"], [item["role"] for item in messages])
         self.assertIn("sad", messages[0]["text"])
         self.assertIn("prototype", messages[2]["text"])
+
+    def test_retry_latest_user_turn_replaces_assistant_response(self):
+        app = create_app(
+            coach_factory=DeterministicKernelGuidedCoach,
+            dry_run=True,
+        )
+        client = TestClient(app)
+        first = client.post(
+            "/api/chat",
+            json={
+                "session_id": "retry-session",
+                "message": "They will think I am incompetent.",
+                "trace": True,
+            },
+        )
+
+        retry = client.post(
+            "/api/chat/retry",
+            json={
+                "session_id": "retry-session",
+                "message_index": 1,
+                "message": "I'm feeling sad today.",
+                "trace": True,
+            },
+        )
+
+        self.assertEqual(200, first.status_code)
+        self.assertEqual(200, retry.status_code)
+        payload = retry.json()
+        self.assertEqual(["user", "assistant"], [item["role"] for item in payload["messages"]])
+        self.assertEqual("I'm feeling sad today.", payload["messages"][0]["text"])
+        self.assertTrue(payload["messages"][1]["trace_available"])
+        self.assertIn("trace", payload)
+        labels = {node["label"] for node in payload["formulation"]["nodes"]}
+        self.assertIn("sadness", labels)
+        self.assertNotIn("cbt: mind_reading", labels)
+
+    def test_retry_rejects_non_latest_user_turn(self):
+        app = create_app(
+            coach_factory=DeterministicKernelGuidedCoach,
+            dry_run=True,
+        )
+        client = TestClient(app)
+        client.post(
+            "/api/chat",
+            json={
+                "session_id": "retry-stale-session",
+                "message": "I'm feeling sad today.",
+            },
+        )
+        client.post(
+            "/api/chat",
+            json={
+                "session_id": "retry-stale-session",
+                "message": "They will think I am incompetent.",
+            },
+        )
+
+        retry = client.post(
+            "/api/chat/retry",
+            json={
+                "session_id": "retry-stale-session",
+                "message_index": 1,
+                "message": "Edit an older turn.",
+            },
+        )
+
+        self.assertEqual(409, retry.status_code)
+        self.assertIn("most recent user turn", retry.json()["detail"])
 
     def test_workspace_map_is_shared_across_conversations(self):
         app = create_app(
@@ -637,7 +710,7 @@ class ApiSurfaceTests(unittest.TestCase):
 
     def test_state_file_restores_conversations_and_workspace_map(self):
         with TemporaryDirectory() as tmpdir:
-            state_file = Path(tmpdir) / "coach-state.json"
+            state_file = Path(tmpdir) / "empath-state.json"
             first_app = create_app(
                 coach_factory=DeterministicKernelGuidedCoach,
                 dry_run=True,
@@ -815,6 +888,44 @@ class ApiSurfaceTests(unittest.TestCase):
         self.assertEqual("info", session.json()["messages"][-1]["role"])
         self.assertNotIn("experiment", session.json()["messages"][-1])
 
+    def test_consultative_question_skips_working_map_and_experiment(self):
+        app = create_app(
+            coach_factory=DeterministicKernelGuidedCoach,
+            dry_run=True,
+        )
+        client = TestClient(app)
+
+        response = client.post(
+            "/api/chat",
+            json={
+                "session_id": "consultative-session",
+                "message": "What is a checksum?",
+                "trace": True,
+            },
+        )
+        session = client.get(
+            "/api/chat/session",
+            params={"session_id": "consultative-session"},
+        )
+
+        self.assertEqual(200, response.status_code)
+        payload = response.json()
+        self.assertEqual(["user", "assistant"], [item["role"] for item in payload["messages"]])
+        self.assertEqual(
+            "concise_factual_answer",
+            payload["trace"]["selection"]["intervention"],
+        )
+        self.assertEqual(
+            "consultative_facilitation",
+            payload["trace"]["kernel"]["operating_mode"]["mode"],
+        )
+        self.assertEqual("skipped", payload["trace"]["working_map"]["action"])
+        self.assertNotIn("formulation_delta", payload)
+        self.assertEqual([], payload["formulation"]["nodes"])
+        self.assertNotIn("experiment", payload)
+        self.assertNotIn("experiment", payload["messages"][1])
+        self.assertNotIn("experiment", session.json()["messages"][-1])
+
     def test_mbsr_framework_question_returns_info_message(self):
         app = create_app(
             coach_factory=DeterministicKernelGuidedCoach,
@@ -987,7 +1098,7 @@ class ApiSurfaceTests(unittest.TestCase):
     def test_formulation_compaction_endpoint_returns_database_policy(self):
         backend = SurrealStateBackend(
             url="mem://",
-            namespace="coach_api_test",
+            namespace="empath_api_test",
             database="compaction",
             record_id="app_state:compaction",
         )

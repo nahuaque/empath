@@ -1,9 +1,9 @@
 from types import SimpleNamespace
 import unittest
 
-from coach.chat import ExtractedCoachingState, ResponsePlan
-from coach.experiments import ExperimentStore, propose_experiment
-from coach.formulation import CaseMemory
+from empath.chat import ExtractedCoachingState, ResponsePlan
+from empath.experiments import ExperimentStore, propose_experiment
+from empath.formulation import CaseMemory
 
 
 class CoachingExperimentTests(unittest.TestCase):

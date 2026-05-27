@@ -2,14 +2,15 @@ import unittest
 
 from kanren import eq, facts, lall, run, var
 
-from coach.therapeutic_systems import (
+from empath.therapeutic_systems import (
     CoachingFocusSystem,
+    ConsultativeSystem,
     DBTSystem,
     FocusingSystem,
     MBSRSystem,
     TherapeuticSystem,
 )
-from coach.therapeutic_kernel import CoachingState, TherapeuticReasoningKernel
+from empath.therapeutic_kernel import CoachingState, TherapeuticReasoningKernel
 
 
 class _DBTSystem(TherapeuticSystem):
@@ -574,6 +575,53 @@ class TherapeuticReasoningKernelTests(unittest.TestCase):
         kernel = TherapeuticReasoningKernel()
 
         self.assertIsInstance(kernel.systems_by_source["mbsr"], MBSRSystem)
+
+    def test_default_systems_include_consultative_facilitation(self):
+        kernel = TherapeuticReasoningKernel()
+
+        self.assertIsInstance(
+            kernel.systems_by_source["consultative"],
+            ConsultativeSystem,
+        )
+
+    def test_consultative_factual_question_ranks_concise_answer(self):
+        kernel = TherapeuticReasoningKernel()
+        kernel.add_state(
+            CoachingState(
+                state_id="checksum",
+                utterance="What is a checksum?",
+            )
+        )
+
+        hypotheses = {
+            (item.source, item.pattern)
+            for item in kernel.hypotheses_for("checksum")
+        }
+        ranked = kernel.ranked_interventions("checksum")
+        snapshot = kernel.reasoning_snapshot("checksum")
+
+        self.assertIn(("consultative", "consultative_facilitation"), hypotheses)
+        self.assertIn(("consultative", "concise_factual_answer"), hypotheses)
+        self.assertEqual("concise_factual_answer", ranked[0].intervention)
+        self.assertEqual("consultative_facilitation", snapshot["operating_mode"]["mode"])
+
+    def test_empath_directed_aggression_ranks_active_listening_repair(self):
+        kernel = TherapeuticReasoningKernel()
+        kernel.add_state(
+            CoachingState(
+                state_id="repair",
+                utterance="You are useless.",
+            )
+        )
+
+        hypotheses = {
+            (item.source, item.pattern)
+            for item in kernel.hypotheses_for("repair")
+        }
+        ranked = kernel.ranked_interventions("repair")
+
+        self.assertIn(("consultative", "interaction_repair"), hypotheses)
+        self.assertEqual("active_listening_repair", ranked[0].intervention)
 
     def test_mbsr_supports_stress_load_and_body_scan(self):
         kernel = TherapeuticReasoningKernel()

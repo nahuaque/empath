@@ -1,11 +1,11 @@
-## Coach therapeutic reasoning kernel
+## Empath therapeutic reasoning kernel
 
 This repository contains a small Python miniKanren kernel for coaching-oriented
 ACT/CBT/REBT/DBT reasoning. It is intended to produce inspectable therapeutic
 hypotheses and intervention candidates, not diagnoses.
 
 ```python
-from coach import CoachingState, TherapeuticReasoningKernel
+from empath import CoachingState, TherapeuticReasoningKernel
 
 kernel = TherapeuticReasoningKernel()
 kernel.add_state(
@@ -66,7 +66,7 @@ The relational layer answers questions like:
 - which candidates are contraindicated before validation or safety handling?
 
 Therapeutic systems are now modular. ACT, CBT, REBT, DBT, coaching focus, and
-cross-system loops live under `coach/therapeutic_systems/`, and
+cross-system loops live under `empath/therapeutic_systems/`, and
 `TherapeuticReasoningKernel` accepts an optional `systems=` tuple. A new system,
 such as focusing, can register its own pattern relation, intervention mappings,
 exercises, modalities, and ranking bonus without changing the coordinator
@@ -115,13 +115,13 @@ uv run python hello.py
 Run the DeepSeek-backed chat CLI:
 
 ```bash
-uv run python -m coach.chat
+uv run python -m empath.chat
 ```
 
 Run the API and SSE chat app:
 
 ```bash
-uv run python -m coach.api
+uv run python -m empath.api
 ```
 
 Then open `http://127.0.0.1:8000`.
@@ -129,27 +129,27 @@ Then open `http://127.0.0.1:8000`.
 For local testing without DeepSeek calls:
 
 ```bash
-uv run python -m coach.api --dry-run
+uv run python -m empath.api --dry-run
 ```
 
 Storage backend:
 
 The API keeps hot workspace objects in memory and persists a serialized
 workspace snapshot through a pluggable backend. The default CLI path uses a
-local SurrealDB file at `.coach_surreal.db`; pass `--store-backend memory` for
+local SurrealDB file at `.empath_surreal.db`; pass `--store-backend memory` for
 throwaway sessions or `--store-backend json --state-file ...` for the legacy
 JSON snapshot backend.
 
 ```bash
-uv run python -m coach.api --store-backend memory
-uv run python -m coach.api --store-backend json --state-file .coach_chat_state.json
-uv run python -m coach.api --store-backend surreal --surreal-url mem://
+uv run python -m empath.api --store-backend memory
+uv run python -m empath.api --store-backend json --state-file .empath_chat_state.json
+uv run python -m empath.api --store-backend surreal --surreal-url mem://
 ```
 
 To point the default SurrealDB backend at a running SurrealDB service:
 
 ```bash
-uv run python -m coach.api \
+uv run python -m empath.api \
   --store-backend surreal \
   --surreal-url ws://127.0.0.1:8000/rpc \
   --surreal-user root \
@@ -159,10 +159,10 @@ uv run python -m coach.api \
 The SurrealDB backend keeps the full app snapshot as a recovery record and also
 projects queryable records into:
 
-- `coach_user`
-- `coach_workspace`
-- `coach_conversation`
-- `coach_message`
+- `empath_user`
+- `empath_workspace`
+- `empath_conversation`
+- `empath_message`
 - `working_node`
 - `working_edge`
 - `working_node_provenance`
@@ -205,12 +205,12 @@ graph playback.
 Useful CLI options:
 
 ```bash
-uv run python -m coach.chat --once "I keep avoiding the prototype because if it is bad, I am a failure."
-uv run python -m coach.chat --show-extraction --show-kernel --show-plan
-uv run python -m coach.chat --trace
-uv run python -m coach.chat --trace-prompts
-uv run python -m coach.chat --show-kernel
-uv run python -m coach.chat --dry-run --once "I should be able to handle this, but I keep putting it off."
+uv run python -m empath.chat --once "I keep avoiding the prototype because if it is bad, I am a failure."
+uv run python -m empath.chat --show-extraction --show-kernel --show-plan
+uv run python -m empath.chat --trace
+uv run python -m empath.chat --trace-prompts
+uv run python -m empath.chat --show-kernel
+uv run python -m empath.chat --dry-run --once "I should be able to handle this, but I keep putting it off."
 ```
 
 The CLI reads the DeepSeek API key from `.deepseek_api_key` by default and uses
@@ -240,7 +240,7 @@ uv run python -m unittest
 Run the offline kernel eval suite:
 
 ```bash
-uv run python -m coach.evals
+uv run python -m empath.evals
 ```
 
 The eval suite currently contains 37 fixtures. Each fixture can assert expected

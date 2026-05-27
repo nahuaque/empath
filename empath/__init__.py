@@ -1,4 +1,4 @@
-"""Coaching reasoning package."""
+"""Empathic coaching reasoning package."""
 
 from .therapeutic_systems import (
     ACTSystem,

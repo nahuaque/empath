@@ -1,4 +1,4 @@
-from coach.therapeutic_kernel import main
+from empath.therapeutic_kernel import main
 
 
 if __name__ == "__main__":

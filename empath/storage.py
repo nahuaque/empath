@@ -82,8 +82,8 @@ class SurrealStateBackend:
         self,
         *,
         url: str,
-        namespace: str = "coach",
-        database: str = "coach",
+        namespace: str = "empath",
+        database: str = "empath",
         record_id: str = "app_state:default",
         username: str | None = None,
         password: str | None = None,
@@ -296,10 +296,10 @@ def _record_payload(record: Any) -> dict[str, Any] | None:
 
 
 _PROJECTION_TABLES = (
-    "coach_user",
-    "coach_workspace",
-    "coach_conversation",
-    "coach_message",
+    "empath_user",
+    "empath_workspace",
+    "empath_conversation",
+    "empath_message",
     "working_node",
     "working_edge",
     "working_node_provenance",
@@ -327,7 +327,7 @@ async def _project_snapshot(
         if not isinstance(workspaces, Mapping):
             continue
         await db.upsert(
-            _projection_record_id("coach_user", app_record, user_id),
+            _projection_record_id("empath_user", app_record, user_id),
             {
                 "app_record": app_record,
                 "user_id": user_id,
@@ -362,7 +362,7 @@ async def _explanation_evidence(
     selected_patterns = _selected_hypothesis_labels(trace)
 
     messages = await db.query(
-        "SELECT role, text, message_index FROM coach_message "
+        "SELECT role, text, message_index FROM empath_message "
         "WHERE app_record = $app_record "
         "AND conversation_key = $conversation_key "
         "AND message_index <= $message_index "
@@ -642,7 +642,7 @@ async def _memory_packet(
     experiments = [item for item in experiments if isinstance(item, Mapping)]
 
     messages = await db.query(
-        "SELECT role, text, message_index FROM coach_message "
+        "SELECT role, text, message_index FROM empath_message "
         "WHERE app_record = $app_record AND conversation_key = $conversation_key "
         "ORDER BY message_index DESC LIMIT 4",
         {"app_record": app_record, "conversation_key": conversation_key},
@@ -998,7 +998,7 @@ async def _project_workspace(
     )
 
     await db.upsert(
-        _projection_record_id("coach_workspace", app_record, workspace_key),
+        _projection_record_id("empath_workspace", app_record, workspace_key),
         {
             "app_record": app_record,
             "workspace_key": workspace_key,
@@ -1087,7 +1087,7 @@ async def _project_conversation(
     conversation_key = _conversation_key(user_id, workspace_id, conversation_id)
     transcript = conversation.get("transcript") if isinstance(conversation.get("transcript"), list) else []
     await db.upsert(
-        _projection_record_id("coach_conversation", app_record, conversation_key),
+        _projection_record_id("empath_conversation", app_record, conversation_key),
         {
             "app_record": app_record,
             "workspace_key": workspace_key,
@@ -1106,7 +1106,7 @@ async def _project_conversation(
             continue
         await db.upsert(
             _projection_record_id(
-                "coach_message",
+                "empath_message",
                 app_record,
                 conversation_key,
                 str(message.get("index")),

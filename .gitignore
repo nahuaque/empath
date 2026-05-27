@@ -2,6 +2,12 @@
 .deepseek_api_key
 
 # Local app state
+.empath_chat_state.json
+.empath_chat_state.json.tmp
+.empath_surreal.db/
+.empath_surreal.db.tmp/
+.empath_surreal*.db/
+.empath_surreal*.db.tmp/
 .coach_chat_state.json
 .coach_chat_state.json.tmp
 .coach_surreal.db/

@@ -1,6 +1,6 @@
 import unittest
 
-from coach.evals import format_eval_failures, kernel_eval_cases, run_kernel_evals
+from empath.evals import format_eval_failures, kernel_eval_cases, run_kernel_evals
 
 
 class KernelEvalSuiteTests(unittest.TestCase):

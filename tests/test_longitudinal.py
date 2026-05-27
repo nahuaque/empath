@@ -1,6 +1,6 @@
 import unittest
 
-from coach.longitudinal import (
+from empath.longitudinal import (
     LongitudinalTurn,
     detect_longitudinal_patterns,
     longitudinal_turn_from_data,

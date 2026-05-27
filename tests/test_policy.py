@@ -1,8 +1,8 @@
 import unittest
 
-from coach.experiments import CoachingExperiment
-from coach.formulation import FormulationNode
-from coach.policy import PolicyMemory
+from empath.experiments import CoachingExperiment
+from empath.formulation import FormulationNode
+from empath.policy import PolicyMemory
 
 
 class PolicyMemoryTests(unittest.TestCase):

@@ -1,7 +1,7 @@
 import unittest
 
-from coach.chat import ExtractedCoachingState, ResponsePlan
-from coach.formulation import CaseMemory, mirror_formulation
+from empath.chat import ExtractedCoachingState, ResponsePlan
+from empath.formulation import CaseMemory, mirror_formulation
 
 
 class CaseMemoryTests(unittest.TestCase):

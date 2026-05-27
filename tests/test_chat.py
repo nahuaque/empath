@@ -3,9 +3,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from coach.chat import (
+from empath.chat import (
     DEFAULT_MODEL,
     EXTRACTION_INSTRUCTIONS,
+    DeterministicKernelGuidedCoach,
     ExtractedCoachingState,
     KernelGuidedCoach,
     MirrorResponse,
@@ -19,6 +20,7 @@ from coach.chat import (
     extraction_from_state,
     format_turn_trace,
     format_response_plan,
+    is_consultative_intervention,
     render_response_plan,
     sanitize_response_plan,
     format_kernel_snapshot,
@@ -27,8 +29,8 @@ from coach.chat import (
     state_from_user_message,
     with_intervention_deliberation,
 )
-from coach.formulation import FormulationGraph
-from coach.therapeutic_kernel import TherapeuticReasoningKernel
+from empath.formulation import FormulationGraph
+from empath.therapeutic_kernel import TherapeuticReasoningKernel
 
 
 class _FakeRunResult:
@@ -269,6 +271,30 @@ class ChatWorkflowTests(unittest.TestCase):
         self.assertIn("concerns, tasks, challenges, objectives, stakes, and domains", RESPONSE_PLAN_INSTRUCTIONS)
         self.assertIn("make the exercise name that", RESPONSE_PLAN_INSTRUCTIONS)
         self.assertIn("intervention_deliberation", RESPONSE_PLAN_INSTRUCTIONS)
+        self.assertIn("consultative facilitation", RESPONSE_PLAN_INSTRUCTIONS)
+        self.assertIn("verbal aggression toward Empath", RESPONSE_PLAN_INSTRUCTIONS)
+
+    def test_deterministic_consultative_factual_question_uses_neutral_mode(self):
+        coach = DeterministicKernelGuidedCoach()
+
+        turn = coach.respond("What is a checksum?")
+
+        self.assertEqual("concise_factual_answer", turn.response_plan.intervention)
+        self.assertTrue(is_consultative_intervention(turn.response_plan.intervention))
+        self.assertIn("neutral factual question", turn.text)
+        self.assertIn("coaching and emotional support", turn.text)
+        self.assertNotIn("That sounds difficult", turn.text)
+
+    def test_deterministic_empath_aggression_uses_active_listening_repair(self):
+        coach = DeterministicKernelGuidedCoach()
+
+        turn = coach.respond("You are useless.")
+
+        self.assertEqual("active_listening_repair", turn.response_plan.intervention)
+        self.assertTrue(is_consultative_intervention(turn.response_plan.intervention))
+        self.assertIn("I hear the frustration", turn.text)
+        self.assertIn("not here to argue", turn.text)
+        self.assertIn("Socratic inquiry", turn.text)
 
     def test_response_plan_can_be_rendered_and_inspected(self):
         plan = ResponsePlan(
@@ -287,6 +313,22 @@ class ChatWorkflowTests(unittest.TestCase):
         self.assertIn("Separate the outcome", rendered)
         self.assertIn("unconditional_self_acceptance", formatted)
         self.assertIn("tone_constraints", formatted)
+
+    def test_renderer_does_not_add_extra_question_mark_after_mixed_question(self):
+        plan = ResponsePlan(
+            validation="Happy to answer directly.",
+            intervention="concise_factual_answer",
+            exercise="A checksum verifies data integrity.",
+            question=(
+                "Were you asking for a download-verification use case? "
+                "I can also connect it to a project goal."
+            ),
+        )
+
+        rendered = render_response_plan(plan)
+
+        self.assertIn("project goal.", rendered)
+        self.assertNotIn(".?", rendered)
 
     def test_response_plan_sanitizer_removes_internal_safety_note_and_extra_question(self):
         kernel = TherapeuticReasoningKernel()
@@ -315,6 +357,46 @@ class ChatWorkflowTests(unittest.TestCase):
         self.assertIsNone(sanitized.exercise)
         self.assertEqual(1, rendered.count("?"))
         self.assertNotIn("No safety risk", rendered)
+
+    def test_response_plan_sanitizer_removes_internal_label_hypothesis(self):
+        kernel = TherapeuticReasoningKernel()
+        state = state_from_user_message("What is a checksum?", state_id="checksum")
+        kernel.add_state(state)
+        snapshot = kernel.reasoning_snapshot("checksum")
+        plan = ResponsePlan(
+            validation="Happy to answer directly.",
+            hypothesis="concise_factual_answer",
+            intervention="concise_factual_answer",
+            exercise="A checksum verifies data integrity.",
+        )
+
+        sanitized = sanitize_response_plan(plan, kernel_snapshot=snapshot)
+        rendered = render_response_plan(sanitized)
+
+        self.assertIsNone(sanitized.hypothesis)
+        self.assertNotIn("concise_factual_answer", rendered)
+
+    def test_consultative_template_exercise_is_not_rendered_or_refilled(self):
+        kernel = TherapeuticReasoningKernel()
+        state = state_from_user_message("You are useless.", state_id="repair")
+        kernel.add_state(state)
+        snapshot = kernel.reasoning_snapshot("repair")
+        plan = ResponsePlan(
+            validation="I hear the frustration. I am not here to argue with you.",
+            intervention="active_listening_repair",
+            exercise=(
+                "Reflect the frustration without defensiveness, keep unconditional positive regard, "
+                "and offer Socratic inquiry, emotional support, or coaching expertise if desired."
+            ),
+        )
+
+        sanitized = sanitize_response_plan(plan, kernel_snapshot=snapshot)
+        coherent, report = cohere_response_plan(sanitized, kernel_snapshot=snapshot)
+        rendered = render_response_plan(coherent)
+
+        self.assertIsNone(coherent.exercise)
+        self.assertNotIn("Reflect the frustration without defensiveness", rendered)
+        self.assertEqual("passed", report["status"])
 
     def test_plan_coherence_reports_intervention_realignment(self):
         kernel = TherapeuticReasoningKernel()
@@ -686,7 +768,7 @@ class ChatWorkflowTests(unittest.TestCase):
             fail_times=1,
         )
 
-        with patch("coach.chat.time.sleep", return_value=None):
+        with patch("empath.chat.time.sleep", return_value=None):
             mirror = coach.mirror_formulation(FormulationGraph(turn_count=2))
 
         self.assertEqual("Here is the LLM reflective listening pass.", mirror.text)
@@ -699,7 +781,7 @@ class ChatWorkflowTests(unittest.TestCase):
             fail_times=3,
         )
 
-        with patch("coach.chat.time.sleep", return_value=None):
+        with patch("empath.chat.time.sleep", return_value=None):
             with self.assertRaises(RuntimeError):
                 coach.mirror_formulation(FormulationGraph(turn_count=2))
 

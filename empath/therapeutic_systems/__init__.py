@@ -5,6 +5,7 @@ from __future__ import annotations
 from .act import ACTSystem
 from .base import TherapeuticSystem
 from .cbt import CBTSystem
+from .consultative import ConsultativeSystem
 from .dbt import DBTSystem
 from .focusing import FocusingSystem
 from .focus import CoachingFocusSystem
@@ -27,6 +28,7 @@ def default_systems() -> tuple[TherapeuticSystem, ...]:
         GoalDirectionSystem(),
         CoachingFocusSystem(),
         LoopSystem(),
+        ConsultativeSystem(),
     )
 
 
@@ -34,6 +36,7 @@ __all__ = [
     "ACTSystem",
     "CBTSystem",
     "CoachingFocusSystem",
+    "ConsultativeSystem",
     "DBTSystem",
     "FocusingSystem",
     "GoalDirectionSystem",

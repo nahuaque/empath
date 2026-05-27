@@ -1226,6 +1226,7 @@ class TherapeuticReasoningKernel:
         return {
             "state_id": state_id,
             "note": "Patterns are coaching hypotheses, not diagnoses.",
+            "operating_mode": self.operating_mode_for(state_id),
             "hypotheses": [asdict(item) for item in self.hypotheses_for(state_id)],
             "formulations": [
                 asdict(item) for item in self.ranked_formulations(state_id, limit=limit)
@@ -1239,6 +1240,27 @@ class TherapeuticReasoningKernel:
             "recipes": [
                 asdict(item) for item in self.ranked_recipes(state_id, limit=limit)
             ],
+        }
+
+    def operating_mode_for(self, state_id: str) -> dict[str, Any]:
+        """Summarize whether this turn is coaching-oriented or consultative."""
+
+        hypotheses = self.hypotheses_for(state_id)
+        consultative = tuple(
+            hypothesis.pattern
+            for hypothesis in hypotheses
+            if hypothesis.source == "consultative"
+        )
+        if consultative:
+            return {
+                "mode": "consultative_facilitation",
+                "stance": "friendly_open_encouraging",
+                "patterns": consultative,
+            }
+        return {
+            "mode": "coaching_support",
+            "stance": "warm_tentative_non_diagnostic",
+            "patterns": (),
         }
 
     def _not_contraindicatedo(self, state: Any, intervention: Any):
@@ -1771,6 +1793,53 @@ def _infer_behaviors(text: str) -> set[str]:
 def _infer_state_features(text: str) -> set[str]:
     lowered = text.casefold()
     features: set[str] = set()
+    consultative_features: set[str] = set()
+    if re.search(
+        r"\b(you are useless|you're useless|youre useless|you suck|shut up|"
+        r"fuck you|stupid bot|idiot|garbage assistant|terrible assistant|"
+        r"worthless assistant|bad assistant|useless assistant)\b",
+        lowered,
+    ):
+        features.update(("empath_directed_aggression", "needs_validation"))
+    if re.search(
+        r"\b(what is|what's|who is|when is|where is|define|meaning of|"
+        r"how many|how much|quick answer|short answer|briefly answer)\b",
+        lowered,
+    ):
+        consultative_features.add("factual_question")
+    if re.search(
+        r"\b(explain|how does|how do|teach me|walk me through|"
+        r"main ideas|overview of|what are the main ideas|how it works)\b",
+        lowered,
+    ):
+        consultative_features.add("instructional_request")
+    if re.search(
+        r"\b(what should i do|what would you recommend|recommend|best way|"
+        r"how would you approach|what are my options|options for|advice on)\b",
+        lowered,
+    ):
+        consultative_features.add("advisory_request")
+    if re.search(
+        r"\b(compare|comparison|evaluate|tradeoffs?|pros and cons|analy[sz]e|"
+        r"research|evidence|decision support|synthesis|criteria)\b",
+        lowered,
+    ):
+        consultative_features.add("analytical_request")
+    if re.search(
+        r"\b(brainstorm|ideas?|name|naming|tagline|draft|write|design|"
+        r"worldbuild|creative options|come up with)\b",
+        lowered,
+    ):
+        consultative_features.add("creative_ideation_request")
+    if re.search(
+        r"\b(help me think through|think through|explore this|hidden assumptions|"
+        r"question my|what am i missing|socratic|challenge my assumption)\b",
+        lowered,
+    ):
+        consultative_features.add("socratic_exploration_request")
+    if consultative_features:
+        features.update(consultative_features)
+        features.add("consultative_request")
     if re.search(r"\b(trauma|flashback|assault)\b", lowered):
         features.add("trauma_content")
     if re.search(r"\b(suicid|self-harm|hurt myself|end it all)\b", lowered):

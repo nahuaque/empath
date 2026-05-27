@@ -31,6 +31,7 @@ from .chat import (
     PreparedTurn,
     build_response_prompt,
     build_turn_trace,
+    is_consultative_intervention,
     read_api_key,
     with_intervention_deliberation,
 )
@@ -56,14 +57,26 @@ from .therapeutic_kernel import TherapeuticReasoningKernel
 CoachFactory = Callable[[], Any]
 DEFAULT_USER_ID = "default"
 DEFAULT_WORKSPACE_ID = "default"
-DEFAULT_STATE_FILE = ".coach_chat_state.json"
-DEFAULT_SURREAL_FILE = ".coach_surreal.db"
+DEFAULT_STATE_FILE = ".empath_chat_state.json"
+DEFAULT_SURREAL_FILE = ".empath_surreal.db"
 
 
 class ChatRequest(BaseModel):
     """Request body for the non-streaming chat endpoint."""
 
     message: str = Field(min_length=1, max_length=6000)
+    user_id: str = Field(default=DEFAULT_USER_ID, min_length=1, max_length=128)
+    workspace_id: str = Field(default=DEFAULT_WORKSPACE_ID, min_length=1, max_length=128)
+    conversation_id: str | None = Field(default=None, min_length=1, max_length=128)
+    session_id: str | None = Field(default=None, min_length=1, max_length=128)
+    trace: bool = False
+
+
+class ChatRetryRequest(BaseModel):
+    """Retry or edit-and-retry the latest user turn."""
+
+    message_index: int = Field(ge=1)
+    message: str | None = Field(default=None, min_length=1, max_length=6000)
     user_id: str = Field(default=DEFAULT_USER_ID, min_length=1, max_length=128)
     workspace_id: str = Field(default=DEFAULT_WORKSPACE_ID, min_length=1, max_length=128)
     conversation_id: str | None = Field(default=None, min_length=1, max_length=128)
@@ -213,6 +226,15 @@ class ExperimentFeedbackResponse(BaseModel):
     conversation_id: str | None = None
     result: ExperimentFeedbackResult
     policy: dict[str, Any] = Field(default_factory=dict)
+
+
+class ChatRetryError(RuntimeError):
+    """User-facing retry validation error."""
+
+    def __init__(self, detail: str, *, status_code: int = 409) -> None:
+        super().__init__(detail)
+        self.detail = detail
+        self.status_code = status_code
 
 
 @dataclass
@@ -584,6 +606,7 @@ def _state_backend_from_config(
 ) -> StateBackend | None:
     backend = (
         store_backend
+        or os.environ.get("EMPATH_STORE_BACKEND")
         or os.environ.get("COACH_STORE_BACKEND")
         or ("json" if state_file else "surreal")
     ).strip().casefold()
@@ -591,17 +614,46 @@ def _state_backend_from_config(
         return None
     if backend == "json":
         if not state_file:
-            state_file = os.environ.get("COACH_STATE_FILE") or DEFAULT_STATE_FILE
+            state_file = (
+                os.environ.get("EMPATH_STATE_FILE")
+                or os.environ.get("COACH_STATE_FILE")
+                or DEFAULT_STATE_FILE
+            )
         return JsonFileStateBackend(state_file)
     if backend == "surreal":
-        url = surreal_url or os.environ.get("COACH_SURREAL_URL") or _default_surreal_url()
+        url = (
+            surreal_url
+            or os.environ.get("EMPATH_SURREAL_URL")
+            or os.environ.get("COACH_SURREAL_URL")
+            or _default_surreal_url()
+        )
         return SurrealStateBackend(
             url=url,
-            namespace=os.environ.get("COACH_SURREAL_NAMESPACE", surreal_namespace),
-            database=os.environ.get("COACH_SURREAL_DATABASE", surreal_database),
-            record_id=os.environ.get("COACH_SURREAL_RECORD_ID", surreal_record_id),
-            username=surreal_user or os.environ.get("COACH_SURREAL_USER"),
-            password=surreal_password or os.environ.get("COACH_SURREAL_PASSWORD"),
+            namespace=(
+                os.environ.get("EMPATH_SURREAL_NAMESPACE")
+                or os.environ.get("COACH_SURREAL_NAMESPACE")
+                or surreal_namespace
+            ),
+            database=(
+                os.environ.get("EMPATH_SURREAL_DATABASE")
+                or os.environ.get("COACH_SURREAL_DATABASE")
+                or surreal_database
+            ),
+            record_id=(
+                os.environ.get("EMPATH_SURREAL_RECORD_ID")
+                or os.environ.get("COACH_SURREAL_RECORD_ID")
+                or surreal_record_id
+            ),
+            username=(
+                surreal_user
+                or os.environ.get("EMPATH_SURREAL_USER")
+                or os.environ.get("COACH_SURREAL_USER")
+            ),
+            password=(
+                surreal_password
+                or os.environ.get("EMPATH_SURREAL_PASSWORD")
+                or os.environ.get("COACH_SURREAL_PASSWORD")
+            ),
         )
     raise ValueError(f"Unsupported store backend: {store_backend!r}")
 
@@ -622,8 +674,8 @@ def create_app(
     state_backend: StateBackend | None = None,
     store_backend: Literal["memory", "json", "surreal"] | None = None,
     surreal_url: str | None = None,
-    surreal_namespace: str = "coach",
-    surreal_database: str = "coach",
+    surreal_namespace: str = "empath",
+    surreal_database: str = "empath",
     surreal_record_id: str = "app_state:default",
     surreal_user: str | None = None,
     surreal_password: str | None = None,
@@ -701,6 +753,46 @@ def create_app(
             return JSONResponse({"detail": str(exc)}, status_code=500)
 
         await store.save()
+        return JSONResponse(
+            _chat_response_payload(
+                scope,
+                turn,
+                include_trace=payload.trace,
+                formulation_delta=formulation_delta,
+                experiment=experiment,
+            )
+        )
+
+    async def chat_retry_json(request: Request) -> JSONResponse:
+        try:
+            payload = ChatRetryRequest.model_validate(await request.json())
+        except ValidationError as exc:
+            return JSONResponse({"detail": exc.errors()}, status_code=422)
+        except json.JSONDecodeError:
+            return JSONResponse({"detail": "Invalid JSON body."}, status_code=400)
+
+        scope = await store.get_conversation(
+            user_id=payload.user_id,
+            workspace_id=payload.workspace_id,
+            conversation_id=payload.conversation_id,
+            session_id=payload.session_id,
+        )
+        try:
+            result = await _retry_latest_user_turn(
+                scope,
+                message_index=payload.message_index,
+                message=payload.message,
+                store=store,
+            )
+        except ChatRetryError as exc:
+            return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+        except Exception as exc:  # pragma: no cover - integration/runtime boundary
+            return JSONResponse({"detail": str(exc)}, status_code=500)
+
+        await store.save()
+        if isinstance(result, ChatMessage):
+            return JSONResponse(_info_response_payload(scope, result))
+        turn, formulation_delta, experiment = result
         return JSONResponse(
             _chat_response_payload(
                 scope,
@@ -882,6 +974,10 @@ def create_app(
                     friction_after=payload.friction_after,
                 )
                 workspace_scope.workspace.policy.record_experiment(result.experiment)
+                _sync_transcript_experiment(
+                    workspace_scope.workspace,
+                    result.experiment,
+                )
             except KeyError:
                 return JSONResponse({"detail": "Experiment not found."}, status_code=404)
         await store.save()
@@ -1053,39 +1149,34 @@ def create_app(
                     )
                     _touch_conversation(scope)
                     scope.conversation.turn_traces[assistant_record.index] = trace
-                    formulation_delta = scope.workspace.memory.apply_turn(
-                        extraction=prepared.extraction,
-                        kernel_snapshot=prepared.kernel_snapshot,
-                        response_plan=turn.response_plan,
-                        message_index=assistant_record.index,
-                    )
-                    if formulation_delta.longitudinal_patterns:
-                        trace["longitudinal"] = [
-                            item.model_dump()
-                            for item in formulation_delta.longitudinal_patterns
-                        ]
-                        scope.conversation.turn_traces[assistant_record.index] = trace
-                    experiment = scope.workspace.experiments.propose(
+                    formulation_delta, experiment = _apply_turn_artifacts(
+                        scope,
                         turn=turn,
-                        formulation_delta=formulation_delta,
-                        message_index=assistant_record.index,
+                        assistant_message=assistant_record,
+                        trace=trace,
                     )
-                    assistant_record.experiment = experiment
                     yield _sse("plan", turn.response_plan.model_dump(exclude_none=True))
-                    yield _sse("formulation", formulation_delta.model_dump(exclude_none=True))
-                    yield _sse("experiment", experiment.model_dump(exclude_none=True))
+                    if formulation_delta is not None:
+                        yield _sse(
+                            "formulation",
+                            formulation_delta.model_dump(exclude_none=True),
+                        )
+                    if experiment is not None:
+                        yield _sse("experiment", experiment.model_dump(exclude_none=True))
+                    response_data = {
+                        "text": turn.text,
+                        "message": assistant_record.model_dump(exclude_none=True),
+                        "policy": scope.workspace.policy.summary(),
+                        "conversations": [
+                            item.model_dump()
+                            for item in _conversation_summaries(scope)
+                        ],
+                    }
+                    if experiment is not None:
+                        response_data["experiment"] = experiment.model_dump(exclude_none=True)
                     yield _sse(
                         "response",
-                        {
-                            "text": turn.text,
-                            "message": assistant_record.model_dump(exclude_none=True),
-                            "experiment": experiment.model_dump(exclude_none=True),
-                            "policy": scope.workspace.policy.summary(),
-                            "conversations": [
-                                item.model_dump()
-                                for item in _conversation_summaries(scope)
-                            ],
-                        },
+                        response_data,
                     )
                     if include_trace:
                         yield _sse("trace", trace)
@@ -1112,6 +1203,7 @@ def create_app(
             Route("/api/chat/session", chat_session, methods=["GET"]),
             Route("/api/chat/explain", explain_trace, methods=["GET"]),
             Route("/api/chat", chat_json, methods=["POST"]),
+            Route("/api/chat/retry", chat_retry_json, methods=["POST"]),
             Route("/api/chat/stream", chat_stream, methods=["GET"]),
             Route("/api/formulation", formulation, methods=["GET"]),
             Route("/api/formulation/compaction", formulation_compaction, methods=["GET"]),
@@ -1129,66 +1221,153 @@ async def _run_chat_turn(
     message: str,
     *,
     store: ChatSessionStore,
-) -> tuple[ChatTurnResult, FormulationDelta, CoachingExperiment]:
+) -> tuple[ChatTurnResult, FormulationDelta | None, CoachingExperiment | None]:
     async with scope.workspace.lock:  # type: ignore[arg-type]
         _append_transcript_message(scope.conversation, "user", message)
         _touch_conversation(scope)
-        recent_interventions = scope.workspace.memory.recent_interventions()
-        longitudinal_context = scope.workspace.memory.longitudinal_context()
-        local_context = _local_conversation_context(scope.conversation.transcript)
-        prepared = await anyio.to_thread.run_sync(
-            lambda: scope.conversation.coach.prepare_turn(
-                message,
-                recent_interventions=recent_interventions,
-                local_context=local_context,
-                longitudinal_context=longitudinal_context,
-            )
+        return await _complete_chat_turn_locked(scope, message, store=store)
+
+
+async def _complete_chat_turn_locked(
+    scope: ChatScope,
+    message: str,
+    *,
+    store: ChatSessionStore,
+    use_backend_memory: bool = True,
+) -> tuple[ChatTurnResult, FormulationDelta | None, CoachingExperiment | None]:
+    recent_interventions = scope.workspace.memory.recent_interventions()
+    longitudinal_context = scope.workspace.memory.longitudinal_context()
+    local_context = _local_conversation_context(scope.conversation.transcript)
+    prepared = await anyio.to_thread.run_sync(
+        lambda: scope.conversation.coach.prepare_turn(
+            message,
+            recent_interventions=recent_interventions,
+            local_context=local_context,
+            longitudinal_context=longitudinal_context,
         )
+    )
+    if use_backend_memory:
         memory_packet = await store.memory_packet(
             scope,
             extraction=prepared.extraction,
             kernel_snapshot=prepared.kernel_snapshot,
         )
-        prepared = _apply_policy_to_prepared(
+    else:
+        memory_packet = _fallback_memory_packet(
+            scope,
+            extraction=prepared.extraction.model_dump(),
+            kernel_snapshot=prepared.kernel_snapshot,
+        )
+    prepared = _apply_policy_to_prepared(
+        prepared,
+        scope.workspace.policy,
+        memory_packet=memory_packet,
+    )
+    turn = await anyio.to_thread.run_sync(
+        lambda: scope.conversation.coach.complete_prepared_turn(
             prepared,
-            scope.workspace.policy,
-            memory_packet=memory_packet,
+            message_history=None,
         )
-        turn = await anyio.to_thread.run_sync(
-            lambda: scope.conversation.coach.complete_prepared_turn(
-                prepared,
-                message_history=None,
-            )
-        )
-        scope.conversation.history = None
-        trace = build_turn_trace(turn)
-        trace["scope"] = _trace_scope(scope)
-        assistant_message = _append_transcript_message(
-            scope.conversation,
-            "assistant",
-            turn.text,
-            trace_available=True,
-        )
-        _touch_conversation(scope)
+    )
+    scope.conversation.history = None
+    trace = build_turn_trace(turn)
+    trace["scope"] = _trace_scope(scope)
+    assistant_message = _append_transcript_message(
+        scope.conversation,
+        "assistant",
+        turn.text,
+        trace_available=True,
+    )
+    _touch_conversation(scope)
+    scope.conversation.turn_traces[assistant_message.index] = trace
+    formulation_delta, experiment = _apply_turn_artifacts(
+        scope,
+        turn=turn,
+        assistant_message=assistant_message,
+        trace=trace,
+    )
+    return turn, formulation_delta, experiment
+
+
+def _apply_turn_artifacts(
+    scope: ChatScope,
+    *,
+    turn: ChatTurnResult,
+    assistant_message: ChatMessage,
+    trace: dict[str, Any],
+) -> tuple[FormulationDelta | None, CoachingExperiment | None]:
+    """Apply working-map and experiment artifacts for coaching turns."""
+
+    if is_consultative_intervention(turn.response_plan.intervention):
+        trace["working_map"] = {
+            "action": "skipped",
+            "reason": "consultative_facilitation_turn",
+        }
         scope.conversation.turn_traces[assistant_message.index] = trace
-        formulation_delta = scope.workspace.memory.apply_turn(
-            extraction=turn.prepared.extraction,
-            kernel_snapshot=turn.prepared.kernel_snapshot,
-            response_plan=turn.response_plan,
-            message_index=assistant_message.index,
+        return None, None
+
+    formulation_delta = scope.workspace.memory.apply_turn(
+        extraction=turn.prepared.extraction,
+        kernel_snapshot=turn.prepared.kernel_snapshot,
+        response_plan=turn.response_plan,
+        message_index=assistant_message.index,
+    )
+    if formulation_delta.longitudinal_patterns:
+        trace["longitudinal"] = [
+            item.model_dump() for item in formulation_delta.longitudinal_patterns
+        ]
+        scope.conversation.turn_traces[assistant_message.index] = trace
+    experiment = scope.workspace.experiments.propose(
+        turn=turn,
+        formulation_delta=formulation_delta,
+        message_index=assistant_message.index,
+    )
+    assistant_message.experiment = experiment
+    return formulation_delta, experiment
+
+
+async def _retry_latest_user_turn(
+    scope: ChatScope,
+    *,
+    message_index: int,
+    message: str | None,
+    store: ChatSessionStore,
+) -> tuple[ChatTurnResult, FormulationDelta | None, CoachingExperiment | None] | ChatMessage:
+    async with scope.workspace.lock:  # type: ignore[arg-type]
+        latest_user = _latest_user_message(scope.conversation)
+        if latest_user is None:
+            raise ChatRetryError("No user turn is available to retry.", status_code=404)
+        if latest_user.index != message_index:
+            raise ChatRetryError(
+                "Only the most recent user turn can be retried.",
+                status_code=409,
+            )
+
+        retry_text = str(message if message is not None else latest_user.text).strip()
+        if not retry_text:
+            raise ChatRetryError("Retry message cannot be empty.", status_code=422)
+
+        latest_user.text = retry_text
+        _truncate_after_message(scope.conversation, latest_user.index)
+        _rebuild_workspace_derived_state(scope.workspace)
+        _touch_conversation(scope)
+        scope.conversation.history = None
+
+        if _is_framework_explanation_request(retry_text):
+            info_message = _append_transcript_message(
+                scope.conversation,
+                "info",
+                framework_explanation_response(retry_text),
+            )
+            _touch_conversation(scope)
+            return info_message
+
+        return await _complete_chat_turn_locked(
+            scope,
+            retry_text,
+            store=store,
+            use_backend_memory=False,
         )
-        if formulation_delta.longitudinal_patterns:
-            trace["longitudinal"] = [
-                item.model_dump() for item in formulation_delta.longitudinal_patterns
-            ]
-            scope.conversation.turn_traces[assistant_message.index] = trace
-        experiment = scope.workspace.experiments.propose(
-            turn=turn,
-            formulation_delta=formulation_delta,
-            message_index=assistant_message.index,
-        )
-        assistant_message.experiment = experiment
-        return turn, formulation_delta, experiment
 
 
 async def _run_info_turn(scope: ChatScope, message: str) -> ChatMessage:
@@ -1208,8 +1387,8 @@ def _chat_response_payload(
     turn: ChatTurnResult,
     *,
     include_trace: bool,
-    formulation_delta: FormulationDelta,
-    experiment: CoachingExperiment,
+    formulation_delta: FormulationDelta | None,
+    experiment: CoachingExperiment | None,
 ) -> dict[str, Any]:
     stored_trace = None
     if include_trace and scope.conversation.transcript:
@@ -1329,6 +1508,76 @@ def _transcript_message(conversation: ChatConversation, message_index: int) -> C
         if message.index == message_index:
             return message
     return None
+
+
+def _latest_user_message(conversation: ChatConversation) -> ChatMessage | None:
+    for message in reversed(conversation.transcript):
+        if message.role == "user":
+            return message
+    return None
+
+
+def _truncate_after_message(conversation: ChatConversation, message_index: int) -> None:
+    conversation.transcript = [
+        message
+        for message in conversation.transcript
+        if message.index <= message_index
+    ]
+    conversation.turn_traces = {
+        index: trace
+        for index, trace in conversation.turn_traces.items()
+        if index <= message_index
+    }
+    conversation.explanations = {
+        index: explanation
+        for index, explanation in conversation.explanations.items()
+        if index <= message_index
+    }
+
+
+def _rebuild_workspace_derived_state(workspace: ChatWorkspace) -> None:
+    """Replay stored completed turns after transcript surgery."""
+
+    memory = CaseMemory(
+        active_node_limit=workspace.memory.active_node_limit,
+        active_edge_limit=workspace.memory.active_edge_limit,
+        archive_after_turns=workspace.memory.archive_after_turns,
+    )
+    experiment_rows: list[dict[str, Any]] = []
+    conversations = sorted(
+        workspace.conversations.items(),
+        key=lambda item: (item[1].created_order, item[1].updated_order, item[0]),
+    )
+    for _conversation_id, conversation in conversations:
+        for message in conversation.transcript:
+            if message.role == "assistant":
+                trace = conversation.turn_traces.get(message.index)
+                if trace:
+                    selection = trace.get("selection") or {}
+                    if not is_consultative_intervention(selection.get("intervention")):
+                        memory.apply_turn(
+                            extraction=trace.get("extraction") or {},
+                            kernel_snapshot=trace.get("kernel") or {},
+                            response_plan=selection,
+                            message_index=message.index,
+                        )
+                if message.experiment is not None:
+                    experiment_rows.append(message.experiment.model_dump(exclude_none=True))
+
+    experiments = ExperimentStore()
+    experiments.import_state(experiment_rows)
+    workspace.memory = memory
+    workspace.experiments = experiments
+
+
+def _sync_transcript_experiment(
+    workspace: ChatWorkspace,
+    experiment: CoachingExperiment,
+) -> None:
+    for conversation in workspace.conversations.values():
+        for message in conversation.transcript:
+            if message.experiment and message.experiment.id == experiment.id:
+                message.experiment = experiment.model_copy(deep=True)
 
 
 def _touch_conversation(scope: ChatScope) -> None:
@@ -1868,7 +2117,7 @@ def _format_memory_used(memory: Any) -> list[str]:
         return []
 
     lines = [
-        "Memory used: before planning the response, the coach retrieved a compact workspace packet so the latest turn could be read in light continuity."
+        "Memory used: before planning the response, the assistant retrieved a compact workspace packet so the latest turn could be read in light continuity."
     ]
 
     source = str(memory.get("source") or "").strip()
@@ -2495,7 +2744,7 @@ def framework_explanation_response(message: str) -> str:
             "Current coaching framework:\n"
             "- The model first extracts observations from what you said: situation, thoughts, emotions, urges, behavior, values, and goals.\n"
             "- The relational kernel treats ACT, CBT, REBT, DBT, MBSR, Focusing, goal-direction, focus areas, and cross-system loops as tentative lenses.\n"
-            "- The coach then chooses a small next move, while avoiding moves that are too intense for the current state.\n"
+            "- The assistant then chooses a small next move, while avoiding moves that are too intense for the current state.\n"
             "- The Working Map, Direction section, and tiny experiments are there to make the reasoning correctable over time."
         )
 
@@ -2738,7 +2987,7 @@ def _drop_empty(value: Any) -> Any:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run the coaching chat API and SSE app.")
+    parser = argparse.ArgumentParser(description="Run the Empath chat API and SSE app.")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument(
@@ -2774,7 +3023,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=(
             "Persistence backend for workspace/conversation snapshots. "
             "Defaults to json when --state-file is set, otherwise surreal. "
-            "Can also be set with COACH_STORE_BACKEND."
+            "Can also be set with EMPATH_STORE_BACKEND. "
+            "Legacy COACH_STORE_BACKEND is still read as a fallback."
         ),
     )
     parser.add_argument(
@@ -2787,8 +3037,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             f"{Path(DEFAULT_SURREAL_FILE).resolve().as_uri()}"
         ),
     )
-    parser.add_argument("--surreal-namespace", default="coach")
-    parser.add_argument("--surreal-database", default="coach")
+    parser.add_argument("--surreal-namespace", default="empath")
+    parser.add_argument("--surreal-database", default="empath")
     parser.add_argument("--surreal-record-id", default="app_state:default")
     parser.add_argument("--surreal-user", default=None)
     parser.add_argument("--surreal-password", default=None)
@@ -2826,7 +3076,7 @@ CHAT_APP_HTML = r"""<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Coach Chat</title>
+  <title>Empath Chat</title>
   <style>
     :root {
       color-scheme: light;
@@ -3085,6 +3335,9 @@ CHAT_APP_HTML = r"""<!doctype html>
       gap: 8px;
       align-items: center;
     }
+    .message-wrap.user .message-actions {
+      justify-content: flex-end;
+    }
     .why-chip {
       width: auto;
       min-width: 0;
@@ -3101,6 +3354,14 @@ CHAT_APP_HTML = r"""<!doctype html>
     .why-chip:disabled { opacity: 0.7; }
     .experiment-chip {
       background: #ffffff;
+    }
+    .user-turn-chip {
+      background: #ffffff;
+      border-color: #b8cdec;
+      color: #224b82;
+    }
+    .user-turn-chip:hover {
+      background: #eef5ff;
     }
     .trace-explanation {
       max-width: min(680px, 100%);
@@ -3624,7 +3885,7 @@ CHAT_APP_HTML = r"""<!doctype html>
     <main>
       <header>
         <div class="header-main">
-          <h1>Coach Chat</h1>
+          <h1>Empath Chat</h1>
           <div class="status" id="status">Ready</div>
         </div>
         <div class="header-actions">
@@ -3687,13 +3948,21 @@ CHAT_APP_HTML = r"""<!doctype html>
     </div>
   </div>
   <script>
-    const userKey = "coach.userId";
-    const workspaceKey = "coach.workspaceId";
-    const conversationKey = "coach.conversationId";
+    const userKey = "empath.userId";
+    const workspaceKey = "empath.workspaceId";
+    const conversationKey = "empath.conversationId";
+    const legacyUserKey = "coach.userId";
+    const legacyWorkspaceKey = "coach.workspaceId";
+    const legacyConversationKey = "coach.conversationId";
     const legacySessionKey = "coach.sessionId";
-    let userId = localStorage.getItem(userKey) || "default";
-    let workspaceId = localStorage.getItem(workspaceKey) || "default";
+    let userId = localStorage.getItem(userKey)
+      || localStorage.getItem(legacyUserKey)
+      || "default";
+    let workspaceId = localStorage.getItem(workspaceKey)
+      || localStorage.getItem(legacyWorkspaceKey)
+      || "default";
     let sessionId = localStorage.getItem(conversationKey)
+      || localStorage.getItem(legacyConversationKey)
       || localStorage.getItem(legacySessionKey)
       || "";
     localStorage.setItem(userKey, userId);
@@ -3703,6 +3972,7 @@ CHAT_APP_HTML = r"""<!doctype html>
       localStorage.setItem(legacySessionKey, sessionId);
     }
     let activeSource = null;
+    let retryInFlight = false;
 
     const messages = document.getElementById("messages");
     const composer = document.getElementById("composer");
@@ -3998,6 +4268,12 @@ CHAT_APP_HTML = r"""<!doctype html>
     function addMessage(role, text, meta = {}) {
       const wrap = document.createElement("div");
       wrap.className = `message-wrap ${role}`;
+      wrap.dataset.role = role;
+      if (meta.index) {
+        wrap.dataset.messageIndex = String(meta.index);
+      } else if (role === "user") {
+        wrap.dataset.pendingUser = "1";
+      }
       wrap.experiment = meta.experiment || null;
       if (role === "reflection" || role === "info") {
         const isInfo = role === "info";
@@ -4052,7 +4328,58 @@ CHAT_APP_HTML = r"""<!doctype html>
       }
       messages.appendChild(wrap);
       messages.scrollTop = messages.scrollHeight;
+      refreshUserTurnActions();
       return wrap;
+    }
+
+    function syncUserMessageMeta(wrap, meta = {}) {
+      if (!wrap || wrap.dataset.role !== "user") return;
+      if (meta.index) {
+        wrap.dataset.messageIndex = String(meta.index);
+        delete wrap.dataset.pendingUser;
+      }
+      const node = wrap.querySelector(".message.user");
+      if (node && typeof meta.text === "string") {
+        node.textContent = meta.text;
+      }
+      refreshUserTurnActions();
+    }
+
+    function refreshUserTurnActions() {
+      const userWraps = [...messages.querySelectorAll(".message-wrap.user")];
+      const hasPendingUser = userWraps.some((wrap) => wrap.dataset.pendingUser === "1");
+      const latest = hasPendingUser ? null : latestUserWrap();
+      for (const wrap of userWraps) {
+        const existing = wrap.querySelector(".user-turn-actions");
+        if (existing) existing.remove();
+        if (!latest || wrap !== latest) continue;
+        const actions = document.createElement("div");
+        actions.className = "message-actions user-turn-actions";
+        actions.appendChild(userTurnActionButton("Edit", "edit"));
+        actions.appendChild(userTurnActionButton("Retry", "retry"));
+        wrap.appendChild(actions);
+      }
+    }
+
+    function userTurnActionButton(label, action) {
+      const button = document.createElement("button");
+      button.className = "why-chip user-turn-chip";
+      button.type = "button";
+      button.dataset.userTurnAction = action;
+      button.textContent = label;
+      button.disabled = Boolean(activeSource || retryInFlight);
+      return button;
+    }
+
+    function latestUserWrap() {
+      const userWraps = [...messages.querySelectorAll(".message-wrap.user[data-message-index]")];
+      return userWraps.sort(
+        (a, b) => Number(a.dataset.messageIndex || 0) - Number(b.dataset.messageIndex || 0)
+      ).at(-1) || null;
+    }
+
+    function isLatestUserWrap(wrap) {
+      return Boolean(wrap && wrap === latestUserWrap());
     }
 
     function experimentChipLabel(experiment) {
@@ -4082,6 +4409,7 @@ CHAT_APP_HTML = r"""<!doctype html>
       for (const item of items) {
         addMessage(displayRole(item), item.text, item);
       }
+      refreshUserTurnActions();
     }
 
     function displayRole(item) {
@@ -4224,7 +4552,7 @@ CHAT_APP_HTML = r"""<!doctype html>
       if (!nodes.length) {
         const empty = document.createElement("div");
         empty.className = "map-empty";
-        empty.textContent = "The working map will fill in as the coach sees recurring observations, hypotheses, and response moves.";
+        empty.textContent = "The working map will fill in as the assistant sees recurring observations, hypotheses, and response moves.";
         formulationMap.appendChild(empty);
         return;
       }
@@ -4481,6 +4809,76 @@ CHAT_APP_HTML = r"""<!doctype html>
       setStatus("Ready");
     }
 
+    async function retryUserTurn(wrap, replacementText = null) {
+      if (!isLatestUserWrap(wrap)) {
+        setStatus("Only the latest user turn can be retried");
+        return;
+      }
+      const messageIndex = Number(wrap.dataset.messageIndex || 0);
+      const messageNode = wrap.querySelector(".message.user");
+      const currentText = messageNode ? messageNode.textContent.trim() : "";
+      const nextText = replacementText === null ? currentText : String(replacementText || "").trim();
+      if (!messageIndex || !nextText) return;
+
+      retryInFlight = true;
+      send.disabled = true;
+      refreshUserTurnActions();
+      if (messageNode && replacementText !== null) {
+        messageNode.textContent = nextText;
+      }
+      progressAnchor = wrap;
+      traceOut.textContent = "{}";
+      setStatus("Retrying");
+      updateProgress("connecting");
+      try {
+        const response = await fetch("/api/chat/retry", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(scopedBody({
+            message_index: messageIndex,
+            message: nextText,
+            trace: traceToggle.checked,
+          })),
+        });
+        if (!response.ok) throw new Error(await responseErrorDetail(response));
+        const data = await response.json();
+        userId = data.user_id || userId;
+        workspaceId = data.workspace_id || workspaceId;
+        sessionId = data.conversation_id || data.session_id || sessionId;
+        persistSession();
+        renderSessionLabel();
+        updateProgress("rendering");
+        renderConversations(data.conversations || []);
+        renderTranscript(data.messages || []);
+        progressAnchor = latestUserWrap();
+        if (data.trace) appendTrace("trace", data.trace);
+        if (data.formulation_delta) appendTrace("formulation", data.formulation_delta);
+        if (data.experiment) appendTrace("experiment", data.experiment);
+        renderFormulation(data.formulation || { turn_count: 0, nodes: [], edges: [] });
+        renderPolicy(data.policy || policyMemory);
+        setStatus("Ready");
+        finishProgress();
+      } catch (error) {
+        addMessage("coach", `Error: ${error.message || "Unable to retry this turn."}`);
+        setStatus("Error");
+        failProgress();
+      } finally {
+        retryInFlight = false;
+        send.disabled = false;
+        refreshUserTurnActions();
+      }
+    }
+
+    async function responseErrorDetail(response) {
+      try {
+        const data = await response.json();
+        if (typeof data.detail === "string") return data.detail;
+      } catch {
+        // Fall through to the generic status message.
+      }
+      return `Request failed with ${response.status}`;
+    }
+
     function updateReflectionMessage(wrap, text) {
       const body = wrap.querySelector(".reflection-text");
       if (body) renderMarkdownInto(body, text);
@@ -4724,6 +5122,24 @@ CHAT_APP_HTML = r"""<!doctype html>
         button.disabled = false;
       }
     });
+    messages.addEventListener("click", async (event) => {
+      const button = event.target.closest("button[data-user-turn-action]");
+      if (!button) return;
+      const wrap = button.closest(".message-wrap.user");
+      if (!wrap || !isLatestUserWrap(wrap)) {
+        setStatus("Only the latest user turn can be retried");
+        return;
+      }
+      const action = button.dataset.userTurnAction;
+      if (action === "edit") {
+        const currentText = wrap.querySelector(".message.user")?.textContent || "";
+        const nextText = window.prompt("Edit the latest user turn, then retry it.", currentText);
+        if (nextText === null) return;
+        await retryUserTurn(wrap, nextText);
+      } else if (action === "retry") {
+        await retryUserTurn(wrap);
+      }
+    });
 
     composer.addEventListener("submit", (event) => {
       event.preventDefault();
@@ -4753,6 +5169,12 @@ CHAT_APP_HTML = r"""<!doctype html>
         persistSession();
         renderSessionLabel();
         renderConversations([{ conversation_id: sessionId, title: `Conversation ${sessionId.slice(0, 8)}`, active: true }]);
+      });
+      source.addEventListener("message", (event) => {
+        const data = JSON.parse(event.data);
+        if (data.role === "user") {
+          syncUserMessageMeta(progressAnchor, data);
+        }
       });
       source.addEventListener("status", (event) => {
         const data = JSON.parse(event.data);
@@ -4796,11 +5218,13 @@ CHAT_APP_HTML = r"""<!doctype html>
         send.disabled = false;
         source.close();
         if (activeSource === source) activeSource = null;
+        refreshUserTurnActions();
       });
       source.addEventListener("done", () => {
         send.disabled = false;
         source.close();
         if (activeSource === source) activeSource = null;
+        refreshUserTurnActions();
         if (statusEl.textContent !== "Error") {
           setStatus("Ready");
           finishProgress();

@@ -1,4 +1,4 @@
-"""Simple DeepSeek-backed coaching chat CLI."""
+"""Simple DeepSeek-backed Empath chat CLI."""
 
 from __future__ import annotations
 
@@ -18,13 +18,41 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.deepseek import DeepSeekProvider
 
 from .formulation import FormulationGraph, FormulationMirror, mirror_formulation
-from .therapeutic_kernel import CoachingState, TherapeuticReasoningKernel
+from .therapeutic_kernel import (
+    CoachingState,
+    TherapeuticReasoningKernel,
+    _infer_state_features,
+)
 
 
 DEFAULT_MODEL = "deepseek-v4-flash"
 DEFAULT_API_KEY_FILE = ".deepseek_api_key"
 DEFAULT_AGENT_RETRY_ATTEMPTS = 3
 DEFAULT_AGENT_RETRY_BACKOFF_SECONDS = 0.35
+CONSULTATIVE_INTERVENTIONS = frozenset(
+    {
+        "consultative_problem_structuring",
+        "concise_factual_answer",
+        "advisory_recommendation",
+        "instructional_explanation",
+        "analytical_synthesis",
+        "creative_ideation",
+        "socratic_inquiry",
+        "active_listening_repair",
+    }
+)
+CONSULTATIVE_EXERCISE_TEMPLATES = frozenset(
+    {
+        "Clarify the objective, constraints, options, tradeoffs, and one practical next step.",
+        "Answer directly in two to four concise sentences, then note that Empath's strongest area is coaching and emotional support if that angle would be useful.",
+        "Give a recommendation, the rationale, the key tradeoff, and the next implementation step.",
+        "Explain the concept briefly, give one example, and name one common mistake.",
+        "State the decision criteria, compare the options, and give a provisional conclusion.",
+        "Generate a small set of options, cluster them, and suggest one direction to refine.",
+        "Ask one question that tests the objective, assumption, evidence, or constraint.",
+        "Reflect the frustration without defensiveness, keep unconditional positive regard, and offer Socratic inquiry, emotional support, or coaching expertise if desired.",
+    }
+)
 
 
 EXTRACTION_INSTRUCTIONS = """\
@@ -131,6 +159,14 @@ Canonical state feature labels:
 - symbolization_needed
 - inner_critic
 - felt_shift
+- consultative_request
+- factual_question
+- advisory_request
+- instructional_request
+- analytical_request
+- creative_ideation_request
+- socratic_exploration_request
+- empath_directed_aggression
 
 Distress is an estimated 0-10 intensity when enough evidence is present. Use
 null when there is not enough evidence.
@@ -140,14 +176,14 @@ such as "panicking", "can't breathe", "can't cope", or "unbearable".
 
 
 RESPONSE_PLAN_INSTRUCTIONS = """\
-You create a structured coaching response plan. You are not a medical provider
-and you do not diagnose.
+You create a structured response plan for Empath. You are not a medical
+provider and you do not diagnose.
 
-Use the supplied structured extraction and therapeutic kernel output as
-tentative planning context. Treat ACT/CBT/REBT/DBT/MBSR/Focusing labels as
-hypotheses, not facts about the user. Do not say "you are catastrophizing" or
-"you are fused"; use soft phrasing such as "this may involve..." or "one
-possible frame is...".
+Use the supplied structured extraction and reasoning kernel output as tentative
+planning context. Treat ACT/CBT/REBT/DBT/MBSR/Focusing labels as hypotheses,
+not facts about the user. Do not say "you are catastrophizing" or "you are
+fused"; use soft phrasing such as "this may involve..." or "one possible frame
+is...".
 
 Plan constraints:
 - start with a brief validation or reflection
@@ -183,6 +219,29 @@ Plan constraints:
 - when adaptive policy memory is supplied, treat it as user-specific outcome
   evidence: lightly reuse moves that helped, shrink or soften moves that were
   too hard, and avoid over-trusting a single feedback event
+- when the kernel indicates consultative facilitation, do not force a
+  therapeutic lens; clarify the objective, structure the problem, give concise
+  guidance, and invite a coaching/emotional-support angle only if useful
+- for factual questions, answer directly and briefly without infodumping; if
+  the topic is far from coaching or emotional support, mention that Empath's
+  strongest area is coaching and emotional support in at most one sentence
+- for advisory requests, use recommendation, rationale, tradeoff, and next step
+- for instructional requests, use concept, example, common mistake, and
+  application
+- for analytical requests, use criteria, evidence or comparison, conclusion,
+  and confidence level
+- for creative requests, generate options, cluster or evaluate them, then
+  suggest a direction to refine
+- for Socratic exploration, ask one question that tests the objective,
+  assumption, evidence, or constraint
+- for verbal aggression toward Empath, do not defend, scold, or mirror
+  hostility; practice active listening with unconditional positive regard, then
+  offer Socratic inquiry, emotional support, or coaching expertise if desired
+- in consultative mode, the exercise field may contain the concise answer,
+  recommendation, explanation, or facilitation content rather than a
+  therapeutic exercise
+- in consultative mode, instantiate the content for the user's actual request;
+  do not echo meta-instructions like "answer directly" or "state the criteria"
 - do not include safety_note unless there is an actual safety concern
 - if you use the question field, make the exercise an instruction, not another question
 - if the kernel indicates safety risk, prioritize immediate safety/support and
@@ -313,7 +372,10 @@ class ResponsePlan(BaseModel):
     )
     exercise: str | None = Field(
         default=None,
-        description="A small concrete exercise or next action, if useful.",
+        description=(
+            "A small concrete exercise or next action, or consultative answer "
+            "content when the selected mode is non-therapeutic."
+        ),
     )
     question: str | None = Field(
         default=None,
@@ -776,6 +838,7 @@ def state_from_user_message(
         values=values,
         goals=goals,
         distress=distress,
+        features=tuple(sorted(_infer_state_features(user_message))),
         recent_interventions=_clean_tuple(recent_interventions),
     )
 
@@ -803,7 +866,8 @@ def build_response_prompt(
         "Structured extraction:\n"
         f"{json.dumps(extraction.model_dump(), indent=2)}\n\n"
         f"{_format_focus_context(extraction)}\n\n"
-        "Therapeutic kernel output, to use as tentative planning context:\n"
+        "Therapeutic kernel output, including consultative fallback hypotheses, "
+        "to use as tentative planning context:\n"
         f"{json.dumps(kernel_snapshot, indent=2)}\n\n"
     )
     if local_context.strip():
@@ -1099,6 +1163,9 @@ def format_extraction(extraction: ExtractedCoachingState) -> str:
 
 def format_kernel_snapshot(snapshot: dict[str, Any]) -> str:
     lines = ["Kernel hypotheses:"]
+    operating_mode = snapshot.get("operating_mode") or {}
+    if operating_mode.get("mode"):
+        lines.append(f"- mode: {operating_mode.get('mode')}")
     hypotheses = snapshot.get("hypotheses", [])
     if hypotheses:
         for item in hypotheses:
@@ -1181,9 +1248,19 @@ def render_response_plan(plan: ResponsePlan) -> str:
 
     if plan.question:
         question = plan.question.strip()
-        paragraphs.append(question if question.endswith("?") else f"{question}?")
+        paragraphs.append(
+            question
+            if question.endswith(("?", ".", "!")) or "?" in question
+            else f"{question}?"
+        )
 
     return "\n\n".join(part for part in paragraphs if part)
+
+
+def is_consultative_intervention(intervention: str | None) -> bool:
+    """Return whether an intervention is outside the therapeutic map loop."""
+
+    return _clean_intervention_label(intervention) in CONSULTATIVE_INTERVENTIONS
 
 
 def sanitize_response_plan(
@@ -1194,6 +1271,7 @@ def sanitize_response_plan(
     """Remove internal/debug content and enforce one-question rendering."""
 
     safety_note = _clean_safety_note(plan.safety_note, kernel_snapshot)
+    hypothesis = _clean_hypothesis_text(plan.hypothesis, kernel_snapshot)
     exercise = _clean_plan_text(plan.exercise)
     question = _clean_plan_text(plan.question)
     intervention = _kernel_aligned_intervention(plan.intervention, kernel_snapshot)
@@ -1208,7 +1286,7 @@ def sanitize_response_plan(
     return plan.model_copy(
         update={
             "validation": _clean_plan_text(plan.validation) or plan.validation,
-            "hypothesis": _clean_plan_text(plan.hypothesis),
+            "hypothesis": hypothesis,
             "intervention": intervention,
             "exercise": exercise,
             "question": question,
@@ -1496,6 +1574,7 @@ def build_debug_trace(
         "state_id": state.state_id,
         "extraction": _drop_empty(extraction.model_dump(exclude_none=True)),
         "kernel": {
+            "operating_mode": kernel_snapshot.get("operating_mode") or {},
             "hypotheses": kernel_snapshot.get("hypotheses") or [],
             "formulations": kernel_snapshot.get("formulations") or [],
             "clarifying_moves": clarifying_moves,
@@ -1566,6 +1645,9 @@ def format_debug_trace(trace: dict[str, Any]) -> str:
         lines.append("  none")
 
     kernel = trace.get("kernel", {})
+    operating_mode = kernel.get("operating_mode") or {}
+    if operating_mode.get("mode"):
+        lines.append(f"- operating_mode: {operating_mode.get('mode')}")
     lines.append("- kernel hypotheses:")
     hypotheses = kernel.get("hypotheses") or []
     if hypotheses:
@@ -1745,7 +1827,7 @@ def chat_loop(
     trace_prompts: bool = False,
 ) -> int:
     print(
-        "Coach chat. Type /quit or /exit to leave. "
+        "Empath chat. Type /quit or /exit to leave. "
         "Type /trace for last-turn trace, /debug to toggle trace."
     )
     history: list[ModelMessage] | None = None
@@ -1806,11 +1888,11 @@ def chat_loop(
                     include_prompts=trace_prompts_enabled,
                 )
             )
-        print(f"\ncoach> {turn.text}")
+        print(f"\nempath> {turn.text}")
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run a DeepSeek-backed coaching chat CLI.")
+    parser = argparse.ArgumentParser(description="Run the DeepSeek-backed Empath chat CLI.")
     parser.add_argument(
         "--api-key-file",
         default=DEFAULT_API_KEY_FILE,
@@ -1969,6 +2051,15 @@ def draft_response_plan(kernel_snapshot: dict[str, Any]) -> ResponsePlan:
     ) or (candidates[0] if candidates else {})
     intervention = candidate.get("intervention")
     exercise = candidate.get("exercise")
+    if is_consultative_intervention(str(intervention) if intervention else None):
+        return sanitize_response_plan(
+            _draft_consultative_response_plan(
+                str(intervention),
+                exercise=str(exercise) if exercise else None,
+            ),
+            kernel_snapshot=kernel_snapshot,
+        )
+
     hypotheses = candidate.get("hypotheses") or kernel_snapshot.get("hypotheses") or []
     hypothesis_text = None
     if hypotheses:
@@ -1993,6 +2084,115 @@ def draft_response_plan(kernel_snapshot: dict[str, Any]) -> ResponsePlan:
             tone_constraints=("brief", "tentative", "non-diagnostic"),
         ),
         kernel_snapshot=kernel_snapshot,
+    )
+
+
+def _draft_consultative_response_plan(
+    intervention: str,
+    *,
+    exercise: str | None,
+) -> ResponsePlan:
+    if exercise in CONSULTATIVE_EXERCISE_TEMPLATES:
+        exercise = None
+    if intervention == "active_listening_repair":
+        return ResponsePlan(
+            validation="I hear the frustration. I am not here to argue with you.",
+            hypothesis=(
+                "I can stay useful here without being defensive: we can use Socratic inquiry, "
+                "emotional support, or practical coaching depending on what you want."
+            ),
+            intervention=intervention,
+            exercise=(
+                exercise
+                or "From here, I can ask a Socratic question, offer emotional support, or help coach through the problem you want to work on."
+            ),
+            question="What would be most useful from me right now?",
+            tone_constraints=("friendly", "non-defensive", "supportive", "concise"),
+        )
+    if intervention == "concise_factual_answer":
+        return ResponsePlan(
+            validation="Happy to answer directly.",
+            hypothesis=(
+                "This looks like a neutral factual question, so I would keep it concise rather than turning it into a coaching intervention."
+            ),
+            intervention=intervention,
+            exercise=(
+                exercise
+                or "In live mode, answer the factual question directly and briefly. Empath's strongest area is coaching and emotional support, so keep any off-domain answer concise."
+            ),
+            question="Do you want the practical coaching angle on this too?",
+            tone_constraints=("friendly", "concise", "consultative"),
+        )
+    if intervention == "advisory_recommendation":
+        return ResponsePlan(
+            validation="I can approach this as a practical recommendation.",
+            hypothesis=(
+                "This looks like an advisory problem-solving request, not something that needs a therapeutic frame."
+            ),
+            intervention=intervention,
+            exercise=exercise
+            or "Give the recommendation, the rationale, the main tradeoff, and one next step.",
+            question="What constraint matters most here?",
+            tone_constraints=("friendly", "direct", "consultative"),
+        )
+    if intervention == "instructional_explanation":
+        return ResponsePlan(
+            validation="I can explain that briefly.",
+            hypothesis=(
+                "This looks like an instructional request, so the useful move is a compact explanation with one example."
+            ),
+            intervention=intervention,
+            exercise=exercise
+            or "Explain the concept briefly, give one example, and name one common mistake.",
+            question="Do you want a coaching-oriented application of it?",
+            tone_constraints=("friendly", "concise", "educational"),
+        )
+    if intervention == "analytical_synthesis":
+        return ResponsePlan(
+            validation="I can structure the comparison.",
+            hypothesis=(
+                "This looks like an analytical request, so the useful move is criteria, tradeoffs, and a provisional conclusion."
+            ),
+            intervention=intervention,
+            exercise=exercise
+            or "State the criteria, compare the options, and give a provisional conclusion.",
+            question="What decision criterion should carry the most weight?",
+            tone_constraints=("friendly", "analytical", "concise"),
+        )
+    if intervention == "creative_ideation":
+        return ResponsePlan(
+            validation="I can help brainstorm options.",
+            hypothesis=(
+                "This looks like an ideation request, so the useful move is to generate a few options and then narrow them."
+            ),
+            intervention=intervention,
+            exercise=exercise
+            or "Generate a small set of options, cluster them, and suggest one direction to refine.",
+            question="Should the ideas optimize for clarity, novelty, or usefulness?",
+            tone_constraints=("friendly", "creative", "practical"),
+        )
+    if intervention == "socratic_inquiry":
+        return ResponsePlan(
+            validation="I can help you think it through.",
+            hypothesis=(
+                "This looks like an exploration request, so one good question is more useful than a long answer."
+            ),
+            intervention=intervention,
+            exercise=exercise
+            or "Ask one question that tests the objective, assumption, evidence, or constraint.",
+            question="What evidence would change your mind about the current conclusion?",
+            tone_constraints=("friendly", "socratic", "concise"),
+        )
+    return ResponsePlan(
+        validation="I can help structure this.",
+        hypothesis=(
+            "This looks like a consultative facilitation request rather than a therapeutic coaching turn."
+        ),
+        intervention=intervention,
+        exercise=exercise
+        or "Clarify the objective, constraints, options, tradeoffs, and one practical next step.",
+        question="What outcome are you trying to move toward?",
+        tone_constraints=("friendly", "open", "encouraging", "consultative"),
     )
 
 
@@ -2261,6 +2461,31 @@ def _clean_safety_note(
     return cleaned
 
 
+def _clean_hypothesis_text(
+    hypothesis: str | None,
+    kernel_snapshot: dict[str, Any],
+) -> str | None:
+    cleaned = _clean_plan_text(hypothesis)
+    if not cleaned:
+        return None
+    normalized = _clean_intervention_label(cleaned)
+    labels = set()
+    for candidate in kernel_snapshot.get("candidates") or ():
+        if intervention := candidate.get("intervention"):
+            labels.add(str(intervention))
+        for hypothesis_item in candidate.get("hypotheses") or ():
+            if isinstance(hypothesis_item, dict) and hypothesis_item.get("pattern"):
+                labels.add(str(hypothesis_item.get("pattern")))
+    for item in kernel_snapshot.get("hypotheses") or ():
+        if isinstance(item, dict) and item.get("pattern"):
+            labels.add(str(item.get("pattern")))
+    if normalized and normalized in labels:
+        return None
+    if "_" in cleaned and re.fullmatch(r"[a-z0-9_]+", cleaned.casefold()):
+        return None
+    return cleaned
+
+
 def _clean_plan_text(text: str | None) -> str | None:
     if text is None:
         return None
@@ -2280,6 +2505,7 @@ def _clean_plan_text(text: str | None) -> str | None:
 _INTERNAL_PLAN_TEXTS = {
     "Reflect the feeling and the stakes before offering a technique.",
     "Ask one gentle question about what the feeling may be connected to.",
+    *CONSULTATIVE_EXERCISE_TEMPLATES,
 }
 
 
@@ -2319,7 +2545,7 @@ def _substantive_validation(text: str | None) -> bool:
     lowered = cleaned.casefold()
     return bool(
         re.search(
-            r"\b(makes sense|understandable|sounds|hear you|heavy|hard|difficult|painful|thank)\b",
+            r"\b(makes sense|understandable|sounds|hear you|hear the|heavy|hard|difficult|painful|thank)\b",
             lowered,
         )
     )
@@ -2327,6 +2553,8 @@ def _substantive_validation(text: str | None) -> bool:
 
 def _needs_exercise(intervention: str | None) -> bool:
     if not intervention:
+        return False
+    if is_consultative_intervention(intervention):
         return False
     return intervention not in {
         "validation",

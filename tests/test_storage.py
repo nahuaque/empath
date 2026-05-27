@@ -4,7 +4,7 @@ import unittest
 
 import anyio
 
-from coach.storage import SurrealStateBackend
+from empath.storage import SurrealStateBackend
 
 
 class SurrealStateBackendTests(unittest.TestCase):
@@ -12,7 +12,7 @@ class SurrealStateBackendTests(unittest.TestCase):
         async def scenario() -> None:
             backend = SurrealStateBackend(
                 url="mem://",
-                namespace="coach_test",
+                namespace="empath_test",
                 database="storage",
                 record_id="app_state:memory",
             )
@@ -30,7 +30,7 @@ class SurrealStateBackendTests(unittest.TestCase):
         async def scenario() -> None:
             backend = SurrealStateBackend(
                 url="mem://",
-                namespace="coach_test",
+                namespace="empath_test",
                 database="projection",
                 record_id="app_state:projection",
             )
@@ -138,7 +138,7 @@ class SurrealStateBackendTests(unittest.TestCase):
                 {"workspace": "default/workspace-a"},
             )
             messages = await db.query(
-                "SELECT role, text, message_index FROM coach_message "
+                "SELECT role, text, message_index FROM empath_message "
                 "WHERE conversation_key = $conversation ORDER BY message_index",
                 {"conversation": "default/workspace-a/alpha"},
             )
@@ -185,7 +185,7 @@ class SurrealStateBackendTests(unittest.TestCase):
         async def scenario() -> None:
             backend = SurrealStateBackend(
                 url="mem://",
-                namespace="coach_test",
+                namespace="empath_test",
                 database="compaction_policy",
                 record_id="app_state:projection",
             )
@@ -323,7 +323,7 @@ class SurrealStateBackendTests(unittest.TestCase):
         async def scenario() -> None:
             backend = SurrealStateBackend(
                 url="mem://",
-                namespace="coach_test",
+                namespace="empath_test",
                 database="projection_rebuild",
                 record_id="app_state:projection",
             )
@@ -387,10 +387,10 @@ class SurrealStateBackendTests(unittest.TestCase):
     def test_file_backend_persists_across_backend_instances(self):
         async def scenario() -> None:
             with TemporaryDirectory() as tmpdir:
-                url = f"file://{Path(tmpdir) / 'coach-surreal-test.db'}"
+                url = f"file://{Path(tmpdir) / 'empath-surreal-test.db'}"
                 first = SurrealStateBackend(
                     url=url,
-                    namespace="coach_test",
+                    namespace="empath_test",
                     database="storage",
                     record_id="app_state:file",
                 )
@@ -408,7 +408,7 @@ class SurrealStateBackendTests(unittest.TestCase):
 
                 second = SurrealStateBackend(
                     url=url,
-                    namespace="coach_test",
+                    namespace="empath_test",
                     database="storage",
                     record_id="app_state:file",
                 )

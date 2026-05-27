@@ -381,7 +381,7 @@ wheels = [
 ]
 
 [[package]]
-name = "coach"
+name = "empath"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

@@ -1,7 +1,7 @@
 [project]
-name = "coach"
+name = "empath"
 version = "0.1.0"
-description = "A miniKanren therapeutic reasoning kernel for coaching experiments"
+description = "A miniKanren therapeutic reasoning kernel for empathic coaching experiments"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
