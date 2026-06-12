@@ -78,6 +78,16 @@ class ApiSurfaceTests(unittest.TestCase):
         self.assertIn("max-height: calc(100dvh - 170px)", page.text)
         self.assertIn("experiment-card", page.text)
         self.assertIn("message-actions", page.text)
+        self.assertIn("mode-chip", page.text)
+        self.assertIn("mode-explanation", page.text)
+        self.assertIn("modeToggle", page.text)
+        self.assertIn("toggleModeExplanation", page.text)
+        self.assertIn("modeChipLabel", page.text)
+        self.assertIn("counterfactual-chip", page.text)
+        self.assertIn("counterfactual-card", page.text)
+        self.assertIn("counterfactualToggle", page.text)
+        self.assertIn("toggleCounterfactuals", page.text)
+        self.assertIn("Why not others?", page.text)
         self.assertIn("user-turn-actions", page.text)
         self.assertIn("data-user-turn-action", page.text)
         self.assertIn("retryUserTurn", page.text)
@@ -152,8 +162,17 @@ class ApiSurfaceTests(unittest.TestCase):
         self.assertEqual(["user", "assistant"], [item["role"] for item in payload["messages"]])
         self.assertFalse(payload["messages"][0]["trace_available"])
         self.assertTrue(payload["messages"][1]["trace_available"])
+        self.assertEqual("coaching_turn", payload["messages"][1]["mode"])
+        self.assertEqual("Coaching", payload["messages"][1]["mode_label"])
+        self.assertIn("standard coaching", payload["messages"][1]["mode_explanation"])
+        self.assertIn("counterfactuals", payload["messages"][1])
+        self.assertGreaterEqual(len(payload["messages"][1]["counterfactuals"]), 2)
+        self.assertEqual("selected", payload["messages"][1]["counterfactuals"][0]["role"])
+        self.assertIn("expected_shift", payload["messages"][1]["counterfactuals"][0])
         self.assertNotIn("explanation", payload["messages"][1])
         self.assertIn("trace", payload)
+        self.assertEqual("coaching_turn", payload["trace"]["route"]["mode"])
+        self.assertIn("counterfactuals", payload["trace"])
         self.assertEqual(
             [
                 "structured_extraction",
@@ -879,6 +898,8 @@ class ApiSurfaceTests(unittest.TestCase):
         self.assertEqual(200, response.status_code)
         payload = response.json()
         self.assertEqual(["user", "info"], [item["role"] for item in payload["messages"]])
+        self.assertEqual("framework_note", payload["messages"][1]["mode"])
+        self.assertEqual("Framework note", payload["messages"][1]["mode_label"])
         self.assertIn("ACT", payload["response"])
         self.assertIn("CBT", payload["response"])
         self.assertNotIn("trace", payload)
@@ -911,6 +932,13 @@ class ApiSurfaceTests(unittest.TestCase):
         self.assertEqual(200, response.status_code)
         payload = response.json()
         self.assertEqual(["user", "assistant"], [item["role"] for item in payload["messages"]])
+        self.assertEqual("consultative_turn", payload["messages"][1]["mode"])
+        self.assertEqual("Consultative", payload["messages"][1]["mode_label"])
+        self.assertIn("information", payload["messages"][1]["mode_explanation"])
+        self.assertEqual("consultative_turn", payload["trace"]["route"]["mode"])
+        self.assertIn("A checksum is a short value", payload["response"])
+        self.assertNotIn("neutral factual question", payload["response"])
+        self.assertNotIn("In live mode", payload["response"])
         self.assertEqual(
             "concise_factual_answer",
             payload["trace"]["selection"]["intervention"],
@@ -924,6 +952,7 @@ class ApiSurfaceTests(unittest.TestCase):
         self.assertEqual([], payload["formulation"]["nodes"])
         self.assertNotIn("experiment", payload)
         self.assertNotIn("experiment", payload["messages"][1])
+        self.assertNotIn("counterfactuals", payload["messages"][1])
         self.assertNotIn("experiment", session.json()["messages"][-1])
 
     def test_mbsr_framework_question_returns_info_message(self):
@@ -993,6 +1022,8 @@ class ApiSurfaceTests(unittest.TestCase):
         self.assertNotIn("explanation", response_event["message"])
         self.assertEqual(experiment_event["id"], response_event["experiment"]["id"])
         self.assertEqual(experiment_event["id"], response_event["message"]["experiment"]["id"])
+        self.assertIn("counterfactuals", response_event["message"])
+        self.assertGreaterEqual(len(response_event["message"]["counterfactuals"]), 2)
         self.assertIn("candidates", kernel_event)
         self.assertIn("graph", formulation_event)
         self.assertTrue(formulation_event["graph"]["nodes"])
@@ -1028,6 +1059,7 @@ class ApiSurfaceTests(unittest.TestCase):
         self.assertNotIn("formulation", event_names)
         self.assertNotIn("experiment", event_names)
         self.assertEqual("info", response_event["message"]["role"])
+        self.assertEqual("framework_note", response_event["message"]["mode"])
         self.assertIn("DBT", response_event["text"])
         self.assertNotIn("experiment", response_event["message"])
 

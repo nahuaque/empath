@@ -1123,8 +1123,74 @@ async def _project_conversation(
                 "text": _string_or_empty(message.get("text")),
                 "trace_available": bool(message.get("trace_available")),
                 "experiment_id": _nested_string(message, "experiment", "id"),
+                "mode": _string_or_empty(message.get("mode")),
+                "mode_label": _string_or_empty(message.get("mode_label")),
+                "counterfactual_count": len(message.get("counterfactuals") or ()),
             },
         )
+        for index, counterfactual in enumerate(message.get("counterfactuals") or ()):
+            if isinstance(counterfactual, Mapping):
+                await _project_counterfactual(
+                    db,
+                    app_record=app_record,
+                    user_id=user_id,
+                    workspace_id=workspace_id,
+                    workspace_key=workspace_key,
+                    conversation_key=conversation_key,
+                    conversation_id=conversation_id,
+                    message_index=_int_or_zero(message.get("index")),
+                    counterfactual_index=index,
+                    counterfactual=counterfactual,
+                )
+
+
+async def _project_counterfactual(
+    db: Any,
+    *,
+    app_record: str,
+    user_id: str,
+    workspace_id: str,
+    workspace_key: str,
+    conversation_key: str,
+    conversation_id: str,
+    message_index: int,
+    counterfactual_index: int,
+    counterfactual: Mapping[str, Any],
+) -> None:
+    intervention = _string_or_empty(counterfactual.get("intervention"))
+    if not intervention:
+        return
+    await db.upsert(
+        _projection_record_id(
+            "intervention_counterfactual",
+            app_record,
+            conversation_key,
+            str(message_index),
+            str(counterfactual_index),
+        ),
+        {
+            "app_record": app_record,
+            "workspace_key": workspace_key,
+            "conversation_key": conversation_key,
+            "user_id": user_id,
+            "workspace_id": workspace_id,
+            "conversation_id": conversation_id,
+            "message_index": message_index,
+            "counterfactual_index": counterfactual_index,
+            "intervention": intervention,
+            "role": _string_or_empty(counterfactual.get("role")),
+            "score": _optional_float(counterfactual.get("score")),
+            "supported_by": [
+                _string_or_empty(item)
+                for item in (counterfactual.get("supported_by") or ())
+            ],
+            "expected_shift": _string_or_empty(counterfactual.get("expected_shift")),
+            "risk": _string_or_empty(counterfactual.get("risk")),
+            "why": _string_or_empty(counterfactual.get("why")),
+            "test_signal": _string_or_empty(counterfactual.get("test_signal")),
+            "exercise": _string_or_empty(counterfactual.get("exercise")),
+        },
+    )
 
 
 async def _project_working_node(
@@ -1638,6 +1704,13 @@ def _int_or_zero(value: Any) -> int:
 def _optional_int(value: Any) -> int | None:
     try:
         return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_float(value: Any) -> float | None:
+    try:
+        return float(value)
     except (TypeError, ValueError):
         return None
 

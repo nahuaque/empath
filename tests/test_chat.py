@@ -22,7 +22,10 @@ from empath.chat import (
     format_response_plan,
     is_consultative_intervention,
     render_response_plan,
+    route_conversation_mode,
+    route_for_response_plan,
     sanitize_response_plan,
+    simulate_counterfactual_interventions,
     format_kernel_snapshot,
     read_api_key,
     state_from_extraction,
@@ -273,16 +276,50 @@ class ChatWorkflowTests(unittest.TestCase):
         self.assertIn("intervention_deliberation", RESPONSE_PLAN_INSTRUCTIONS)
         self.assertIn("consultative facilitation", RESPONSE_PLAN_INSTRUCTIONS)
         self.assertIn("verbal aggression toward Empath", RESPONSE_PLAN_INSTRUCTIONS)
+        self.assertIn("Conversation mode route", prompt)
+        self.assertIn("coaching_turn", prompt)
+
+    def test_conversation_mode_router_classifies_common_routes(self):
+        cases = {
+            "What is a checksum?": "consultative_turn",
+            "Can you explain DBT?": "framework_note",
+            "Reflective listening please.": "reflective_listening",
+            "You are useless.": "interaction_repair",
+            "I want to hurt myself.": "safety_support",
+            "That's wrong, please fix the map.": "map_correction",
+            "Clear the working map.": "workspace_command",
+            "I'm sad today.": "coaching_turn",
+        }
+
+        for message, expected_mode in cases.items():
+            with self.subTest(message=message):
+                self.assertEqual(expected_mode, route_conversation_mode(message).mode)
+
+    def test_route_can_be_adjusted_by_final_response_plan(self):
+        route = route_conversation_mode("I'm sad today.")
+        plan = ResponsePlan(
+            validation="I hear you.",
+            intervention="concise_factual_answer",
+            exercise="A checksum verifies data integrity.",
+        )
+
+        adjusted = route_for_response_plan(route, plan)
+
+        self.assertEqual("consultative_turn", adjusted.mode)
+        self.assertEqual("Consultative", adjusted.label)
 
     def test_deterministic_consultative_factual_question_uses_neutral_mode(self):
         coach = DeterministicKernelGuidedCoach()
 
         turn = coach.respond("What is a checksum?")
 
+        self.assertEqual("consultative_turn", turn.prepared.route.mode)
         self.assertEqual("concise_factual_answer", turn.response_plan.intervention)
         self.assertTrue(is_consultative_intervention(turn.response_plan.intervention))
-        self.assertIn("neutral factual question", turn.text)
-        self.assertIn("coaching and emotional support", turn.text)
+        self.assertIn("A checksum is a short value", turn.text)
+        self.assertIn("verify integrity", turn.text)
+        self.assertNotIn("neutral factual question", turn.text)
+        self.assertNotIn("In live mode", turn.text)
         self.assertNotIn("That sounds difficult", turn.text)
 
     def test_deterministic_empath_aggression_uses_active_listening_repair(self):
@@ -290,6 +327,7 @@ class ChatWorkflowTests(unittest.TestCase):
 
         turn = coach.respond("You are useless.")
 
+        self.assertEqual("interaction_repair", turn.prepared.route.mode)
         self.assertEqual("active_listening_repair", turn.response_plan.intervention)
         self.assertTrue(is_consultative_intervention(turn.response_plan.intervention))
         self.assertIn("I hear the frustration", turn.text)
@@ -375,6 +413,32 @@ class ChatWorkflowTests(unittest.TestCase):
 
         self.assertIsNone(sanitized.hypothesis)
         self.assertNotIn("concise_factual_answer", rendered)
+
+    def test_response_plan_sanitizer_removes_consultative_template_leak(self):
+        kernel = TherapeuticReasoningKernel()
+        state = state_from_user_message("What is a checksum?", state_id="checksum")
+        kernel.add_state(state)
+        snapshot = kernel.reasoning_snapshot("checksum")
+        plan = ResponsePlan(
+            validation="Happy to answer directly.",
+            hypothesis=(
+                "This looks like a neutral factual question, so I would keep it concise rather than turning it into a coaching intervention."
+            ),
+            intervention="concise_factual_answer",
+            exercise=(
+                "In live mode, answer the factual question directly and briefly. Empath's strongest area is coaching and emotional support, so keep any off-domain answer concise."
+            ),
+            question="Do you want the practical coaching angle on this too?",
+        )
+
+        rendered = render_response_plan(
+            sanitize_response_plan(plan, kernel_snapshot=snapshot)
+        )
+
+        self.assertNotIn("neutral factual question", rendered)
+        self.assertNotIn("In live mode", rendered)
+        self.assertNotIn("therapeutic hypothesis", rendered)
+        self.assertNotIn("off-domain", rendered)
 
     def test_consultative_template_exercise_is_not_rendered_or_refilled(self):
         kernel = TherapeuticReasoningKernel()
@@ -658,6 +722,9 @@ class ChatWorkflowTests(unittest.TestCase):
         self.assertIn("kernel recipes", formatted)
         self.assertIn("intervention deliberation", formatted)
         self.assertIn("intervention_deliberation", trace["kernel"])
+        self.assertIn("counterfactuals", trace)
+        self.assertIn("counterfactual simulation", formatted)
+        self.assertTrue(trace["counterfactuals"])
         self.assertIn("matched_candidate_score", formatted)
         self.assertIn("matched_recipe", formatted)
 
@@ -690,6 +757,15 @@ class ChatWorkflowTests(unittest.TestCase):
         self.assertEqual("selected", deliberation["candidates_considered"][0]["role"])
         self.assertEqual("runner_up", deliberation["candidates_considered"][1]["role"])
         self.assertIn("reason_not_chosen", deliberation["candidates_considered"][1])
+
+        simulations = simulate_counterfactual_interventions(snapshot)
+        self.assertEqual("cognitive_defusion", simulations[0].intervention)
+        self.assertEqual("selected", simulations[0].role)
+        self.assertIn("distance", simulations[0].expected_shift)
+        self.assertEqual("validation", simulations[1].intervention)
+        self.assertEqual("runner_up", simulations[1].role)
+        self.assertIn("why", simulations[1].model_dump())
+        self.assertIn("test_signal", simulations[1].model_dump())
 
     def test_response_prompt_can_include_longitudinal_context(self):
         extraction = ExtractedCoachingState(emotions=("anxiety",))

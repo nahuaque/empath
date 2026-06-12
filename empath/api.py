@@ -26,6 +26,8 @@ from .chat import (
     DEFAULT_API_KEY_FILE,
     DEFAULT_MODEL,
     ChatTurnResult,
+    CounterfactualIntervention,
+    ConversationModeRoute,
     DeterministicKernelGuidedCoach,
     KernelGuidedCoach,
     PreparedTurn,
@@ -33,6 +35,8 @@ from .chat import (
     build_turn_trace,
     is_consultative_intervention,
     read_api_key,
+    route_conversation_mode,
+    route_for_response_plan,
     with_intervention_deliberation,
 )
 from .experiments import (
@@ -93,6 +97,10 @@ class ChatMessage(BaseModel):
     trace_available: bool = False
     explanation: str | None = None
     experiment: CoachingExperiment | None = None
+    counterfactuals: tuple[CounterfactualIntervention, ...] | None = None
+    mode: str | None = None
+    mode_label: str | None = None
+    mode_explanation: str | None = None
 
 
 class ConversationSummary(BaseModel):
@@ -733,8 +741,9 @@ def create_app(
             conversation_id=payload.conversation_id,
             session_id=payload.session_id,
         )
-        if _is_framework_explanation_request(payload.message):
-            message = await _run_info_turn(scope, payload.message)
+        route = route_conversation_mode(payload.message)
+        if route.mode == "framework_note":
+            message = await _run_info_turn(scope, payload.message, route=route)
             await store.save()
             return JSONResponse(
                 _info_response_payload(
@@ -742,11 +751,19 @@ def create_app(
                     message,
                 )
             )
+        if route.mode == "reflective_listening":
+            try:
+                message = await _run_reflection_turn(scope, payload.message, route=route)
+            except Exception as exc:  # pragma: no cover - integration/runtime boundary
+                return JSONResponse({"detail": str(exc)}, status_code=500)
+            await store.save()
+            return JSONResponse(_info_response_payload(scope, message))
 
         try:
             turn, formulation_delta, experiment = await _run_chat_turn(
                 scope,
                 payload.message,
+                route=route,
                 store=store,
             )
         except Exception as exc:  # pragma: no cover - integration/runtime boundary
@@ -916,7 +933,17 @@ def create_app(
             return JSONResponse({"detail": str(exc)}, status_code=500)
 
         async with scope.workspace.lock:  # type: ignore[arg-type]
-            message = _append_transcript_message(scope.conversation, "reflection", mirror.text)
+            message = _append_transcript_message(
+                scope.conversation,
+                "reflection",
+                mirror.text,
+                route=ConversationModeRoute(
+                    mode="reflective_listening",
+                    label="Reflective listening",
+                    reason="The user requested a reflective playback of the working map.",
+                    confidence=0.9,
+                ),
+            )
             _touch_conversation(scope)
 
         await store.save()
@@ -1052,6 +1079,7 @@ def create_app(
             return JSONResponse({"detail": str(exc)}, status_code=422)
         scope = await store.get_conversation(**scope_params)
         include_trace = _truthy(request.query_params.get("trace"))
+        route = route_conversation_mode(message)
 
         async def events():
             yield _sse(
@@ -1063,16 +1091,18 @@ def create_app(
                     "conversation_id": scope.conversation_id,
                 },
             )
+            yield _sse("mode", route.model_dump())
             async with scope.workspace.lock:  # type: ignore[arg-type]
                 try:
                     user_record = _append_transcript_message(scope.conversation, "user", message)
                     _touch_conversation(scope)
                     yield _sse("message", user_record.model_dump(exclude_none=True))
-                    if _is_framework_explanation_request(message):
+                    if route.mode == "framework_note":
                         info_record = _append_transcript_message(
                             scope.conversation,
                             "info",
                             framework_explanation_response(message),
+                            route=route,
                         )
                         _touch_conversation(scope)
                         yield _sse(
@@ -1080,6 +1110,39 @@ def create_app(
                             {
                                 "text": info_record.text,
                                 "message": info_record.model_dump(exclude_none=True),
+                                "policy": scope.workspace.policy.summary(),
+                                "conversations": [
+                                    item.model_dump()
+                                    for item in _conversation_summaries(scope)
+                                ],
+                            },
+                        )
+                        yield _sse(
+                            "done",
+                            {
+                                "ok": True,
+                                "message_count": len(scope.conversation.transcript),
+                            },
+                        )
+                        await store.save()
+                        return
+                    if route.mode == "reflective_listening":
+                        graph = scope.workspace.memory.snapshot()
+                        mirror = await anyio.to_thread.run_sync(
+                            lambda: scope.conversation.coach.mirror_formulation(graph)
+                        )
+                        reflection_record = _append_transcript_message(
+                            scope.conversation,
+                            "reflection",
+                            mirror.text,
+                            route=route,
+                        )
+                        _touch_conversation(scope)
+                        yield _sse(
+                            "response",
+                            {
+                                "text": reflection_record.text,
+                                "message": reflection_record.model_dump(exclude_none=True),
                                 "policy": scope.workspace.policy.summary(),
                                 "conversations": [
                                     item.model_dump()
@@ -1105,6 +1168,7 @@ def create_app(
                     prepared = await anyio.to_thread.run_sync(
                         lambda: scope.conversation.coach.prepare_turn(
                             message,
+                            route=route,
                             recent_interventions=recent_interventions,
                             local_context=local_context,
                             longitudinal_context=longitudinal_context,
@@ -1141,11 +1205,20 @@ def create_app(
                     scope.conversation.history = None
                     trace = build_turn_trace(turn)
                     trace["scope"] = _trace_scope(scope)
+                    final_route = route_for_response_plan(turn.prepared.route, turn.response_plan)
+                    trace["route"] = final_route.model_dump()
+                    counterfactuals = (
+                        None
+                        if is_consultative_intervention(turn.response_plan.intervention)
+                        else _trace_counterfactuals(trace)
+                    )
                     assistant_record = _append_transcript_message(
                         scope.conversation,
                         "assistant",
                         turn.text,
                         trace_available=True,
+                        route=final_route,
+                        counterfactuals=counterfactuals,
                     )
                     _touch_conversation(scope)
                     scope.conversation.turn_traces[assistant_record.index] = trace
@@ -1220,18 +1293,25 @@ async def _run_chat_turn(
     scope: ChatScope,
     message: str,
     *,
+    route: ConversationModeRoute,
     store: ChatSessionStore,
 ) -> tuple[ChatTurnResult, FormulationDelta | None, CoachingExperiment | None]:
     async with scope.workspace.lock:  # type: ignore[arg-type]
         _append_transcript_message(scope.conversation, "user", message)
         _touch_conversation(scope)
-        return await _complete_chat_turn_locked(scope, message, store=store)
+        return await _complete_chat_turn_locked(
+            scope,
+            message,
+            route=route,
+            store=store,
+        )
 
 
 async def _complete_chat_turn_locked(
     scope: ChatScope,
     message: str,
     *,
+    route: ConversationModeRoute,
     store: ChatSessionStore,
     use_backend_memory: bool = True,
 ) -> tuple[ChatTurnResult, FormulationDelta | None, CoachingExperiment | None]:
@@ -1241,6 +1321,7 @@ async def _complete_chat_turn_locked(
     prepared = await anyio.to_thread.run_sync(
         lambda: scope.conversation.coach.prepare_turn(
             message,
+            route=route,
             recent_interventions=recent_interventions,
             local_context=local_context,
             longitudinal_context=longitudinal_context,
@@ -1272,11 +1353,20 @@ async def _complete_chat_turn_locked(
     scope.conversation.history = None
     trace = build_turn_trace(turn)
     trace["scope"] = _trace_scope(scope)
+    final_route = route_for_response_plan(turn.prepared.route, turn.response_plan)
+    trace["route"] = final_route.model_dump()
+    counterfactuals = (
+        None
+        if is_consultative_intervention(turn.response_plan.intervention)
+        else _trace_counterfactuals(trace)
+    )
     assistant_message = _append_transcript_message(
         scope.conversation,
         "assistant",
         turn.text,
         trace_available=True,
+        route=final_route,
+        counterfactuals=counterfactuals,
     )
     _touch_conversation(scope)
     scope.conversation.turn_traces[assistant_message.index] = trace
@@ -1353,33 +1443,77 @@ async def _retry_latest_user_turn(
         _touch_conversation(scope)
         scope.conversation.history = None
 
-        if _is_framework_explanation_request(retry_text):
+        route = route_conversation_mode(retry_text)
+        if route.mode == "framework_note":
             info_message = _append_transcript_message(
                 scope.conversation,
                 "info",
                 framework_explanation_response(retry_text),
+                route=route,
             )
             _touch_conversation(scope)
             return info_message
+        if route.mode == "reflective_listening":
+            graph = scope.workspace.memory.snapshot()
+            mirror = await anyio.to_thread.run_sync(
+                lambda: scope.conversation.coach.mirror_formulation(graph)
+            )
+            reflection_message = _append_transcript_message(
+                scope.conversation,
+                "reflection",
+                mirror.text,
+                route=route,
+            )
+            _touch_conversation(scope)
+            return reflection_message
 
         return await _complete_chat_turn_locked(
             scope,
             retry_text,
+            route=route,
             store=store,
             use_backend_memory=False,
         )
 
 
-async def _run_info_turn(scope: ChatScope, message: str) -> ChatMessage:
+async def _run_info_turn(
+    scope: ChatScope,
+    message: str,
+    *,
+    route: ConversationModeRoute,
+) -> ChatMessage:
     async with scope.workspace.lock:  # type: ignore[arg-type]
         _append_transcript_message(scope.conversation, "user", message)
         info_message = _append_transcript_message(
             scope.conversation,
             "info",
             framework_explanation_response(message),
+            route=route,
         )
         _touch_conversation(scope)
         return info_message
+
+
+async def _run_reflection_turn(
+    scope: ChatScope,
+    message: str,
+    *,
+    route: ConversationModeRoute,
+) -> ChatMessage:
+    async with scope.workspace.lock:  # type: ignore[arg-type]
+        _append_transcript_message(scope.conversation, "user", message)
+        graph = scope.workspace.memory.snapshot()
+        mirror = await anyio.to_thread.run_sync(
+            lambda: scope.conversation.coach.mirror_formulation(graph)
+        )
+        reflection_message = _append_transcript_message(
+            scope.conversation,
+            "reflection",
+            mirror.text,
+            route=route,
+        )
+        _touch_conversation(scope)
+        return reflection_message
 
 
 def _chat_response_payload(
@@ -1464,6 +1598,7 @@ def _apply_policy_to_prepared(
         or not policy_report.get("summary", {}).get("empty", True)
     )
     return PreparedTurn(
+        route=prepared.route,
         extraction=prepared.extraction,
         state=prepared.state,
         kernel_snapshot=adjusted_snapshot,
@@ -1478,6 +1613,7 @@ def _apply_policy_to_prepared(
             prepared.state.utterance,
             prepared.extraction,
             adjusted_snapshot,
+            route=prepared.route,
             local_context=prepared.local_context,
             longitudinal_context=prepared.longitudinal_context,
             memory_context=memory_context,
@@ -1492,15 +1628,48 @@ def _append_transcript_message(
     text: str,
     *,
     trace_available: bool = False,
+    route: ConversationModeRoute | None = None,
+    counterfactuals: tuple[CounterfactualIntervention, ...] | None = None,
 ) -> ChatMessage:
     message = ChatMessage(
         index=len(conversation.transcript) + 1,
         role=role,
         text=text,
         trace_available=trace_available,
+        counterfactuals=counterfactuals,
+        **_route_message_fields(route),
     )
     conversation.transcript.append(message)
     return message
+
+
+def _route_message_fields(route: ConversationModeRoute | None) -> dict[str, str]:
+    if route is None:
+        return {}
+    return {
+        "mode": route.mode,
+        "mode_label": route.label,
+        "mode_explanation": route.reason,
+    }
+
+
+def _trace_counterfactuals(
+    trace: dict[str, Any],
+) -> tuple[CounterfactualIntervention, ...] | None:
+    raw = trace.get("counterfactuals") or (
+        (trace.get("kernel") or {}).get("counterfactual_simulation")
+        if isinstance(trace.get("kernel"), dict)
+        else None
+    )
+    if not raw:
+        return None
+    items = []
+    for item in raw:
+        try:
+            items.append(CounterfactualIntervention.model_validate(item))
+        except ValidationError:
+            continue
+    return tuple(items) or None
 
 
 def _transcript_message(conversation: ChatConversation, message_index: int) -> ChatMessage | None:
@@ -2702,33 +2871,7 @@ def _format_backward_justification(report: dict[str, Any]) -> list[str]:
 def _is_framework_explanation_request(message: str) -> bool:
     """Detect educational framework questions that should not become coaching turns."""
 
-    text = f" {message.strip()} "
-    lowered = text.casefold()
-    explanation_cue = bool(
-        re.search(
-            r"\b(what is|what's|explain|tell me about|how does|how do|why use|"
-            r"difference between|compare|overview|walk me through|define|"
-            r"framework|modality|therapeutic system|therapy system|approach)\b",
-            lowered,
-        )
-    )
-    if not explanation_cue:
-        return False
-
-    if re.search(r"\b(CBT|ACT|REBT|DBT|MBSR|GTD|OKR|OKRs|WOOP)\b", text):
-        return True
-    return bool(
-        re.search(
-            r"\b(cognitive behavioral|acceptance and commitment|"
-            r"rational emotive|dialectical behavior|dialectical behavioural|"
-            r"mindfulness-based stress reduction|mindfulness based stress reduction|"
-            r"focusing|coaching framework|therapeutic framework|"
-            r"therapeutic system|therapy system|modality|modalities|"
-            r"goal direction|goal-direction|getting things done|weekly review|"
-            r"personal kanban|implementation intention)\b",
-            lowered,
-        )
-    )
+    return route_conversation_mode(message).mode == "framework_note"
 
 
 def framework_explanation_response(message: str) -> str:
@@ -3355,6 +3498,22 @@ CHAT_APP_HTML = r"""<!doctype html>
     .experiment-chip {
       background: #ffffff;
     }
+    .mode-chip {
+      border-color: #b8cdec;
+      background: #eef5ff;
+      color: #224b82;
+    }
+    .mode-chip:hover {
+      background: #e2efff;
+    }
+    .counterfactual-chip {
+      border-color: #d3c7a6;
+      background: #fff9e9;
+      color: #6d5212;
+    }
+    .counterfactual-chip:hover {
+      background: #fff2cc;
+    }
     .user-turn-chip {
       background: #ffffff;
       border-color: #b8cdec;
@@ -3375,6 +3534,63 @@ CHAT_APP_HTML = r"""<!doctype html>
       line-height: 1.45;
       white-space: pre-wrap;
       overflow-wrap: anywhere;
+    }
+    .mode-explanation {
+      max-width: min(680px, 100%);
+      border: 1px solid #cad9ef;
+      border-left: 3px solid #5078b8;
+      border-radius: 8px;
+      background: #f5f9ff;
+      padding: 10px 12px;
+      color: #23334f;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+    .counterfactual-card {
+      width: min(680px, 100%);
+      border: 1px solid #ded2b1;
+      border-radius: 8px;
+      background: #fffdf7;
+      padding: 12px;
+      color: #2f2b20;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+    .counterfactual-title {
+      font-weight: 760;
+      margin-bottom: 8px;
+    }
+    .counterfactual-list {
+      display: grid;
+      gap: 9px;
+    }
+    .counterfactual-item {
+      border-top: 1px solid #eadfbd;
+      padding-top: 9px;
+    }
+    .counterfactual-item:first-child {
+      border-top: 0;
+      padding-top: 0;
+    }
+    .counterfactual-head {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      justify-content: space-between;
+      font-weight: 720;
+    }
+    .counterfactual-role {
+      border-radius: 999px;
+      background: #f6ecd0;
+      padding: 2px 7px;
+      font-size: 11px;
+      font-weight: 760;
+      text-transform: uppercase;
+      color: #6d5212;
+    }
+    .counterfactual-meta {
+      margin-top: 5px;
+      color: var(--muted);
     }
     .experiment-card {
       width: min(680px, 100%);
@@ -4300,9 +4516,27 @@ CHAT_APP_HTML = r"""<!doctype html>
         node.textContent = text;
       }
       wrap.appendChild(node);
-      if (role === "coach" && (meta.experiment || meta.trace_available)) {
+      if (role === "coach" && (meta.mode || hasCounterfactuals(meta) || meta.experiment || meta.trace_available)) {
         const actions = document.createElement("div");
         actions.className = "message-actions";
+        if (meta.mode) {
+          const modeChip = document.createElement("button");
+          modeChip.className = "why-chip mode-chip";
+          modeChip.type = "button";
+          modeChip.dataset.modeToggle = "1";
+          modeChip.textContent = modeChipLabel(meta);
+          modeChip.addEventListener("click", () => toggleModeExplanation(wrap, modeChip, meta));
+          actions.appendChild(modeChip);
+        }
+        if (hasCounterfactuals(meta)) {
+          const counterfactualChip = document.createElement("button");
+          counterfactualChip.className = "why-chip counterfactual-chip";
+          counterfactualChip.type = "button";
+          counterfactualChip.dataset.counterfactualToggle = "1";
+          counterfactualChip.textContent = "Why not others?";
+          counterfactualChip.addEventListener("click", () => toggleCounterfactuals(wrap, counterfactualChip, meta));
+          actions.appendChild(counterfactualChip);
+        }
         if (meta.experiment) {
           const experimentChip = document.createElement("button");
           experimentChip.className = "why-chip experiment-chip";
@@ -4387,6 +4621,120 @@ CHAT_APP_HTML = r"""<!doctype html>
       if (experiment.outcome) return `One-turn test · ${humanizeMapLabel(experiment.outcome)}`;
       if (experiment.status && experiment.status !== "proposed") return `One-turn test · ${humanizeMapLabel(experiment.status)}`;
       return "One-turn test";
+    }
+
+    function modeChipLabel(meta = {}) {
+      return meta.mode_label || humanizeMapLabel(meta.mode || "Mode");
+    }
+
+    function hasCounterfactuals(meta = {}) {
+      return Array.isArray(meta.counterfactuals) && meta.counterfactuals.length > 1;
+    }
+
+    function toggleModeExplanation(wrap, chip, meta = {}) {
+      const existing = wrap.querySelector(".mode-explanation");
+      if (existing && !existing.hidden) {
+        existing.hidden = true;
+        chip.textContent = modeChipLabel(meta);
+        return;
+      }
+      const panel = renderModeExplanation(wrap, meta);
+      panel.hidden = false;
+      chip.textContent = "Hide mode";
+      messages.scrollTop = messages.scrollHeight;
+    }
+
+    function renderModeExplanation(wrap, meta = {}) {
+      let panel = wrap.querySelector(".mode-explanation");
+      if (!panel) {
+        panel = document.createElement("div");
+        panel.className = "mode-explanation";
+        wrap.appendChild(panel);
+      }
+      const label = modeChipLabel(meta);
+      const reason = meta.mode_explanation || "Empath routed this as the most fitting interaction mode for the turn.";
+      panel.innerHTML = `<strong>${escapeHtml(label)}</strong><br>${escapeHtml(reason)}`;
+      return panel;
+    }
+
+    function toggleCounterfactuals(wrap, chip, meta = {}) {
+      const existing = wrap.querySelector(".counterfactual-card");
+      if (existing && !existing.hidden) {
+        existing.hidden = true;
+        chip.textContent = "Why not others?";
+        return;
+      }
+      const card = renderCounterfactuals(wrap, meta.counterfactuals || []);
+      if (card) {
+        card.hidden = false;
+        chip.textContent = "Hide alternatives";
+        messages.scrollTop = messages.scrollHeight;
+      }
+    }
+
+    function renderCounterfactuals(wrap, counterfactuals = []) {
+      if (!Array.isArray(counterfactuals) || counterfactuals.length < 2) return null;
+      let card = wrap.querySelector(".counterfactual-card");
+      if (!card) {
+        card = document.createElement("div");
+        card.className = "counterfactual-card";
+        wrap.appendChild(card);
+      }
+      card.textContent = "";
+
+      const title = document.createElement("div");
+      title.className = "counterfactual-title";
+      title.textContent = "Intervention alternatives considered";
+      card.appendChild(title);
+
+      const list = document.createElement("div");
+      list.className = "counterfactual-list";
+      for (const item of counterfactuals.slice(0, 4)) {
+        list.appendChild(renderCounterfactualItem(item));
+      }
+      card.appendChild(list);
+      return card;
+    }
+
+    function renderCounterfactualItem(item = {}) {
+      const node = document.createElement("div");
+      node.className = "counterfactual-item";
+
+      const head = document.createElement("div");
+      head.className = "counterfactual-head";
+      const name = document.createElement("div");
+      name.textContent = humanizeMapLabel(item.intervention || "alternative");
+      const role = document.createElement("span");
+      role.className = "counterfactual-role";
+      role.textContent = item.role === "selected"
+        ? "selected"
+        : item.role === "runner_up"
+        ? "runner-up"
+        : "not chosen";
+      head.appendChild(name);
+      head.appendChild(role);
+      node.appendChild(head);
+
+      node.appendChild(counterfactualLine("Expected", item.expected_shift));
+      if (item.risk) {
+        node.appendChild(counterfactualLine("Risk", item.risk));
+      }
+      node.appendChild(counterfactualLine(item.role === "selected" ? "Why" : "Why not", item.why));
+      node.appendChild(counterfactualLine("Signal", item.test_signal));
+      if (Array.isArray(item.supported_by) && item.supported_by.length) {
+        node.appendChild(counterfactualLine("Supported by", item.supported_by.map(humanizeMapLabel).join(", ")));
+      }
+      return node;
+    }
+
+    function counterfactualLine(label, value) {
+      const line = document.createElement("div");
+      line.className = "counterfactual-meta";
+      const strong = document.createElement("strong");
+      strong.textContent = `${label}: `;
+      line.appendChild(strong);
+      line.appendChild(document.createTextNode(value || "Not enough evidence."));
+      return line;
     }
 
     function toggleExperiment(wrap, chip) {

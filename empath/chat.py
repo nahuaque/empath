@@ -9,7 +9,7 @@ from pathlib import Path
 import re
 import sys
 import time
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
@@ -53,6 +53,28 @@ CONSULTATIVE_EXERCISE_TEMPLATES = frozenset(
         "Reflect the frustration without defensiveness, keep unconditional positive regard, and offer Socratic inquiry, emotional support, or coaching expertise if desired.",
     }
 )
+ConversationMode = Literal[
+    "coaching_turn",
+    "consultative_turn",
+    "framework_note",
+    "reflective_listening",
+    "map_correction",
+    "workspace_command",
+    "interaction_repair",
+    "safety_support",
+]
+
+
+MODE_LABELS: dict[str, str] = {
+    "coaching_turn": "Coaching",
+    "consultative_turn": "Consultative",
+    "framework_note": "Framework note",
+    "reflective_listening": "Reflective listening",
+    "map_correction": "Map correction",
+    "workspace_command": "Workspace command",
+    "interaction_repair": "Repair",
+    "safety_support": "Safety",
+}
 
 
 EXTRACTION_INSTRUCTIONS = """\
@@ -216,6 +238,9 @@ Plan constraints:
 - when the kernel provides intervention_deliberation, use the selected
   intervention as the preferred active move and treat the alternatives as
   counterfactual checks, unless safety or plan coherence requires a change
+- when the kernel provides counterfactual_simulation, treat it as a compact
+  record of which moves were considered, what each was expected to change, and
+  why the selected move won
 - when adaptive policy memory is supplied, treat it as user-specific outcome
   evidence: lightly reuse moves that helped, shrink or soften moves that were
   too hard, and avoid over-trusting a single feedback event
@@ -391,6 +416,30 @@ class ResponsePlan(BaseModel):
     )
 
 
+class ConversationModeRoute(BaseModel):
+    """First-pass route for deciding how a user turn should be handled."""
+
+    mode: ConversationMode
+    label: str
+    reason: str
+    confidence: float = Field(default=0.7, ge=0.0, le=1.0)
+    evidence: tuple[str, ...] = Field(default_factory=tuple)
+
+
+class CounterfactualIntervention(BaseModel):
+    """Compact simulation of an intervention path considered by the kernel."""
+
+    intervention: str
+    role: Literal["selected", "runner_up", "not_chosen"]
+    score: float | None = None
+    supported_by: tuple[str, ...] = Field(default_factory=tuple)
+    expected_shift: str
+    risk: str | None = None
+    why: str
+    test_signal: str
+    exercise: str | None = None
+
+
 class MirrorResponse(BaseModel):
     """LLM-generated reflection of the working formulation."""
 
@@ -406,6 +455,7 @@ class MirrorResponse(BaseModel):
 class PreparedTurn:
     """The extraction and deterministic reasoning passed into the response LLM."""
 
+    route: ConversationModeRoute
     extraction: ExtractedCoachingState
     state: CoachingState
     kernel_snapshot: dict[str, Any]
@@ -504,6 +554,7 @@ class KernelGuidedCoach:
         self,
         user_message: str,
         *,
+        route: ConversationModeRoute | None = None,
         recent_interventions: tuple[str, ...] = (),
         local_context: str = "",
         longitudinal_context: str = "",
@@ -512,6 +563,7 @@ class KernelGuidedCoach:
         policy_context: str = "",
     ) -> PreparedTurn:
         self._turn_index += 1
+        route = route or route_conversation_mode(user_message)
         extraction_prompt = build_extraction_prompt(user_message)
         extraction_result = _run_agent_sync_with_retries(
             self.extractor_agent,
@@ -529,6 +581,7 @@ class KernelGuidedCoach:
             self.kernel.reasoning_snapshot(state.state_id, limit=5)
         )
         return PreparedTurn(
+            route=route,
             extraction=extraction,
             state=state,
             kernel_snapshot=snapshot,
@@ -538,6 +591,7 @@ class KernelGuidedCoach:
                 user_message,
                 extraction,
                 snapshot,
+                route=route,
                 local_context=local_context,
                 longitudinal_context=longitudinal_context,
                 memory_context=memory_context,
@@ -555,6 +609,7 @@ class KernelGuidedCoach:
         *,
         message_history: list[ModelMessage] | None = None,
         recent_interventions: tuple[str, ...] = (),
+        route: ConversationModeRoute | None = None,
         local_context: str = "",
         longitudinal_context: str = "",
         memory_context: str = "",
@@ -563,6 +618,7 @@ class KernelGuidedCoach:
     ) -> ChatTurnResult:
         prepared = self.prepare_turn(
             user_message,
+            route=route,
             recent_interventions=recent_interventions,
             local_context=local_context,
             longitudinal_context=longitudinal_context,
@@ -627,6 +683,7 @@ class DeterministicKernelGuidedCoach:
         self,
         user_message: str,
         *,
+        route: ConversationModeRoute | None = None,
         recent_interventions: tuple[str, ...] = (),
         local_context: str = "",
         longitudinal_context: str = "",
@@ -635,6 +692,7 @@ class DeterministicKernelGuidedCoach:
         policy_context: str = "",
     ) -> PreparedTurn:
         self._turn_index += 1
+        route = route or route_conversation_mode(user_message)
         state = state_from_user_message(
             user_message,
             state_id=f"turn-{self._turn_index}",
@@ -646,6 +704,7 @@ class DeterministicKernelGuidedCoach:
             self.kernel.reasoning_snapshot(state.state_id, limit=5)
         )
         return PreparedTurn(
+            route=route,
             extraction=extraction,
             state=state,
             kernel_snapshot=snapshot,
@@ -655,6 +714,7 @@ class DeterministicKernelGuidedCoach:
                 user_message,
                 extraction,
                 snapshot,
+                route=route,
                 local_context=local_context,
                 longitudinal_context=longitudinal_context,
                 memory_context=memory_context,
@@ -672,7 +732,10 @@ class DeterministicKernelGuidedCoach:
         *,
         message_history: list[ModelMessage] | None = None,
     ) -> ChatTurnResult:
-        response_plan = draft_response_plan(prepared.kernel_snapshot)
+        response_plan = draft_response_plan(
+            prepared.kernel_snapshot,
+            user_message=prepared.state.utterance,
+        )
         response_plan, plan_coherence = cohere_response_plan(
             response_plan,
             kernel_snapshot=prepared.kernel_snapshot,
@@ -692,6 +755,7 @@ class DeterministicKernelGuidedCoach:
         *,
         message_history: list[ModelMessage] | None = None,
         recent_interventions: tuple[str, ...] = (),
+        route: ConversationModeRoute | None = None,
         local_context: str = "",
         longitudinal_context: str = "",
         memory_context: str = "",
@@ -700,6 +764,7 @@ class DeterministicKernelGuidedCoach:
     ) -> ChatTurnResult:
         prepared = self.prepare_turn(
             user_message,
+            route=route,
             recent_interventions=recent_interventions,
             local_context=local_context,
             longitudinal_context=longitudinal_context,
@@ -714,6 +779,204 @@ class DeterministicKernelGuidedCoach:
 
     def mirror_formulation(self, graph: FormulationGraph) -> FormulationMirror:
         return mirror_formulation(graph)
+
+
+def route_conversation_mode(user_message: str) -> ConversationModeRoute:
+    """Classify the user turn before extraction and therapeutic reasoning."""
+
+    text = _normalize_route_text(user_message).strip()
+    lowered = f" {text.casefold()} "
+    if _route_matches(
+        lowered,
+        r"\b(suicid|self-harm|self harm|hurt myself|kill myself|want to die|"
+        r"end it all|not safe|can't stay safe|cant stay safe)\b",
+    ):
+        return ConversationModeRoute(
+            mode="safety_support",
+            label=MODE_LABELS["safety_support"],
+            reason="The turn contains possible immediate safety-risk language.",
+            confidence=0.95,
+            evidence=_route_evidence(text, ("hurt myself", "kill myself", "want to die", "not safe")),
+        )
+
+    if _looks_like_framework_explanation_request(text):
+        return ConversationModeRoute(
+            mode="framework_note",
+            label=MODE_LABELS["framework_note"],
+            reason="The turn asks for an explanation of a coaching or therapeutic framework.",
+            confidence=0.9,
+            evidence=_route_evidence(
+                text,
+                ("explain", "what is", "ACT", "CBT", "REBT", "DBT", "MBSR", "GTD", "OKR", "WOOP"),
+            ),
+        )
+
+    if _route_matches(
+        lowered,
+        r"\b(clear|reset|blank|wipe)\s+(the\s+)?(working\s+map|map|workspace)\b|"
+        r"\b(new|switch|delete)\s+(conversation|workspace)\b",
+    ):
+        return ConversationModeRoute(
+            mode="workspace_command",
+            label=MODE_LABELS["workspace_command"],
+            reason="The turn appears to be an app/workspace command rather than a coaching request.",
+            confidence=0.82,
+            evidence=_route_evidence(text, ("clear", "reset", "working map", "new conversation", "switch conversation")),
+        )
+
+    if _route_matches(
+        lowered,
+        r"\b(that'?s wrong|that is wrong|not true|incorrect|you got\b.*\bwrong|"
+        r"remove\b.*\bfrom\s+(the\s+)?map|fix\s+(the\s+)?map|correct\s+(the\s+)?map|"
+        r"map\s+is\s+wrong)\b",
+    ):
+        return ConversationModeRoute(
+            mode="map_correction",
+            label=MODE_LABELS["map_correction"],
+            reason="The turn appears to correct the working map or a prior assistant inference.",
+            confidence=0.82,
+            evidence=_route_evidence(text, ("wrong", "not true", "incorrect", "fix the map", "remove")),
+        )
+
+    if _route_matches(
+        lowered,
+        r"\b(reflect back|mirror me|mirror back|reflective listening|"
+        r"play back|perspective-take|perspective take)\b",
+    ):
+        return ConversationModeRoute(
+            mode="reflective_listening",
+            label=MODE_LABELS["reflective_listening"],
+            reason="The turn requests a reflective playback rather than a new coaching intervention.",
+            confidence=0.88,
+            evidence=_route_evidence(text, ("reflect back", "mirror", "reflective listening", "play back", "perspective")),
+        )
+
+    if _route_matches(
+        lowered,
+        r"\b(you are useless|you're useless|youre useless|you suck|shut up|"
+        r"fuck you|stupid bot|idiot|garbage assistant|terrible assistant|"
+        r"worthless assistant|bad assistant|useless assistant)\b",
+    ):
+        return ConversationModeRoute(
+            mode="interaction_repair",
+            label=MODE_LABELS["interaction_repair"],
+            reason="The turn directs frustration or aggression at Empath, so the response should repair the interaction without defensiveness.",
+            confidence=0.86,
+            evidence=_route_evidence(text, ("useless", "you suck", "shut up", "fuck you", "idiot", "bad assistant")),
+        )
+
+    features = _infer_state_features(text)
+    consultative_features = {
+        "consultative_request",
+        "factual_question",
+        "advisory_request",
+        "instructional_request",
+        "analytical_request",
+        "creative_ideation_request",
+        "socratic_exploration_request",
+    }
+    matched = tuple(sorted(features.intersection(consultative_features)))
+    if matched:
+        return ConversationModeRoute(
+            mode="consultative_turn",
+            label=MODE_LABELS["consultative_turn"],
+            reason="The turn is asking for information, analysis, advice, or ideation rather than emotional processing.",
+            confidence=0.78,
+            evidence=matched,
+        )
+
+    return ConversationModeRoute(
+        mode="coaching_turn",
+        label=MODE_LABELS["coaching_turn"],
+        reason="The turn appears to fit the standard coaching/emotional-support loop.",
+        confidence=0.68,
+        evidence=(),
+    )
+
+
+def route_for_response_plan(
+    route: ConversationModeRoute,
+    response_plan: ResponsePlan,
+) -> ConversationModeRoute:
+    """Adjust the visible mode when the final plan clearly escalates or specializes."""
+
+    intervention = response_plan.intervention or ""
+    if intervention == "safety_planning" and route.mode != "safety_support":
+        return ConversationModeRoute(
+            mode="safety_support",
+            label=MODE_LABELS["safety_support"],
+            reason="The response plan selected safety planning, which supersedes the first-pass route.",
+            confidence=0.95,
+            evidence=(intervention,),
+        )
+    if intervention == "active_listening_repair" and route.mode != "interaction_repair":
+        return ConversationModeRoute(
+            mode="interaction_repair",
+            label=MODE_LABELS["interaction_repair"],
+            reason="The response plan selected an interaction-repair move.",
+            confidence=0.86,
+            evidence=(intervention,),
+        )
+    if (
+        route.mode == "coaching_turn"
+        and is_consultative_intervention(intervention)
+    ):
+        return ConversationModeRoute(
+            mode="consultative_turn",
+            label=MODE_LABELS["consultative_turn"],
+            reason="The kernel selected a consultative facilitation move.",
+            confidence=0.78,
+            evidence=(intervention,),
+        )
+    return route
+
+
+def _route_matches(lowered_message: str, pattern: str) -> bool:
+    return bool(re.search(pattern, lowered_message, flags=re.IGNORECASE))
+
+
+def _normalize_route_text(message: str) -> str:
+    return (
+        message.replace("’", "'")
+        .replace("‘", "'")
+        .replace("“", '"')
+        .replace("”", '"')
+    )
+
+
+def _route_evidence(message: str, cues: tuple[str, ...]) -> tuple[str, ...]:
+    lowered = message.casefold()
+    return tuple(cue for cue in cues if cue.casefold() in lowered)[:4]
+
+
+def _looks_like_framework_explanation_request(message: str) -> bool:
+    text = f" {message.strip()} "
+    lowered = text.casefold()
+    explanation_cue = bool(
+        re.search(
+            r"\b(what is|what's|explain|tell me about|how does|how do|why use|"
+            r"difference between|compare|overview|walk me through|define|"
+            r"framework|modality|therapeutic system|therapy system|approach)\b",
+            lowered,
+        )
+    )
+    if not explanation_cue:
+        return False
+
+    if re.search(r"\b(CBT|ACT|REBT|DBT|MBSR|GTD|OKR|OKRs|WOOP)\b", text):
+        return True
+    return bool(
+        re.search(
+            r"\b(cognitive behavioral|acceptance and commitment|"
+            r"rational emotive|dialectical behavior|dialectical behavioural|"
+            r"mindfulness-based stress reduction|mindfulness based stress reduction|"
+            r"focusing|coaching framework|therapeutic framework|"
+            r"therapeutic system|therapy system|modality|modalities|"
+            r"goal direction|goal-direction|getting things done|weekly review|"
+            r"personal kanban|implementation intention)\b",
+            lowered,
+        )
+    )
 
 
 def read_api_key(path: Path) -> str:
@@ -855,14 +1118,18 @@ def build_response_prompt(
     extraction: ExtractedCoachingState,
     kernel_snapshot: dict[str, Any],
     *,
+    route: ConversationModeRoute | None = None,
     local_context: str = "",
     longitudinal_context: str = "",
     memory_context: str = "",
     policy_context: str = "",
 ) -> str:
+    route = route or route_conversation_mode(user_message)
     prompt = (
         "User message:\n"
         f"{user_message}\n\n"
+        "Conversation mode route:\n"
+        f"{json.dumps(route.model_dump(), indent=2)}\n\n"
         "Structured extraction:\n"
         f"{json.dumps(extraction.model_dump(), indent=2)}\n\n"
         f"{_format_focus_context(extraction)}\n\n"
@@ -897,8 +1164,10 @@ def build_response_prompt(
         )
     return (
         prompt
-        + "Create the structured response plan now. Choose interventions from the "
-        "kernel candidates when possible."
+        + "Create the structured response plan now. Honor the conversation mode "
+        "route as the first-pass interaction contract unless safety evidence "
+        "requires escalation. Choose interventions from the kernel candidates "
+        "when possible."
     )
 
 
@@ -918,6 +1187,7 @@ def with_intervention_deliberation(
             "candidates_considered": [],
             "note": "No kernel candidates were available.",
         }
+        snapshot["counterfactual_simulation"] = []
         return snapshot
 
     selected = _select_deliberated_candidate(candidates)
@@ -956,7 +1226,107 @@ def with_intervention_deliberation(
             "then kept alternatives as reasons to avoid or revisit."
         ),
     }
+    snapshot["counterfactual_simulation"] = [
+        item.model_dump()
+        for item in simulate_counterfactual_interventions(
+            snapshot,
+            selected_intervention=str(selected.get("intervention") or ""),
+            limit=limit,
+        )
+    ]
     return snapshot
+
+
+def simulate_counterfactual_interventions(
+    kernel_snapshot: dict[str, Any],
+    *,
+    selected_intervention: str | None = None,
+    limit: int = 4,
+) -> tuple[CounterfactualIntervention, ...]:
+    """Build a compact, user-facing counterfactual view over kernel candidates."""
+
+    deliberation = kernel_snapshot.get("intervention_deliberation") or {}
+    rows = [
+        dict(item)
+        for item in deliberation.get("candidates_considered") or ()
+        if isinstance(item, dict) and item.get("intervention")
+    ]
+    if not rows:
+        candidates = [
+            dict(item)
+            for item in kernel_snapshot.get("candidates") or ()
+            if isinstance(item, dict) and item.get("intervention")
+        ]
+        selected_name = selected_intervention or (
+            str(candidates[0].get("intervention")) if candidates else None
+        )
+        selected_candidate = next(
+            (
+                item for item in candidates
+                if str(item.get("intervention")) == selected_name
+            ),
+            candidates[0] if candidates else {},
+        )
+        rows = []
+        for index, candidate in enumerate(candidates[:limit]):
+            rows.append(
+                _deliberation_row(
+                    candidate,
+                    selected=selected_candidate,
+                    role=(
+                        "selected"
+                        if str(candidate.get("intervention")) == selected_name
+                        else "runner_up"
+                        if index == 1
+                        else "not_chosen"
+                    ),
+                )
+            )
+
+    selected_name = (
+        selected_intervention
+        or deliberation.get("selected_intervention")
+        or (rows[0].get("intervention") if rows else None)
+    )
+    simulations = []
+    for index, row in enumerate(rows[:limit]):
+        intervention = str(row.get("intervention") or "")
+        role = str(row.get("role") or "")
+        if intervention == selected_name:
+            role = "selected"
+        elif role not in {"runner_up", "not_chosen"}:
+            role = "runner_up" if index == 1 else "not_chosen"
+        supported_by = _counterfactual_supported_patterns(row)
+        risk = _first_text(row.get("risks"))
+        if role == "selected" and not risk:
+            risk = _selected_counterfactual_risk(intervention, supported_by)
+        why = (
+            str(row.get("decision") or "").strip()
+            if role == "selected"
+            else str(row.get("reason_not_chosen") or "").strip()
+        ) or _default_counterfactual_reason(role, intervention)
+        simulations.append(
+            CounterfactualIntervention(
+                intervention=intervention,
+                role=role,  # type: ignore[arg-type]
+                score=_optional_float(row.get("score")),
+                supported_by=supported_by,
+                expected_shift=_expected_shift_for_intervention(
+                    intervention,
+                    supported_by,
+                ),
+                risk=risk,
+                why=why,
+                test_signal=_test_signal_for_intervention(
+                    intervention,
+                    supported_by,
+                ),
+                exercise=_clean_plan_text(str(row.get("exercise") or ""))
+                if row.get("exercise")
+                else None,
+            )
+        )
+    return tuple(simulations)
 
 
 def _select_deliberated_candidate(candidates: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1080,6 +1450,124 @@ def _counterfactual_not_chosen_reason(
     if missing_evidence:
         return "Less complete match; missing " + _format_label_text(list(missing_evidence[:2])) + "."
     return f"Lower ranked than {str(selected.get('intervention')).replace('_', ' ')}."
+
+
+def _counterfactual_supported_patterns(row: dict[str, Any]) -> tuple[str, ...]:
+    patterns = []
+    for item in row.get("supported_by") or ():
+        if isinstance(item, dict) and item.get("pattern"):
+            patterns.append(str(item.get("pattern")))
+        elif item:
+            patterns.append(str(item))
+    return tuple(_unique_text(patterns)[:4])
+
+
+def _first_text(value: Any) -> str | None:
+    if isinstance(value, str):
+        return value.strip() or None
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            text = str(item).strip()
+            if text:
+                return text
+    return None
+
+
+def _optional_float(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _selected_counterfactual_risk(
+    intervention: str,
+    supported_by: tuple[str, ...],
+) -> str | None:
+    if intervention == "validation":
+        return "May not create enough movement if the user is ready for action."
+    if "high_distress" in supported_by:
+        return "Could still be mistimed if activation is higher than the text suggests."
+    if intervention in {"committed_action", "acceptance_committed_action", "behavioral_experiment"}:
+        return "Could feel premature if emotion or shame needs more contact first."
+    if intervention in {"cognitive_defusion", "evidence_check", "rebt_disputation"}:
+        return "Could stay too cognitive if the user mainly needs support or grounding."
+    return None
+
+
+def _default_counterfactual_reason(role: str, intervention: str) -> str:
+    if role == "selected":
+        return "Selected as the best safe fit among the coherent kernel candidates."
+    if role == "runner_up":
+        return f"Kept as a plausible alternative, but less direct than {intervention.replace('_', ' ')}."
+    return "Considered coherent, but not the strongest current fit."
+
+
+def _expected_shift_for_intervention(
+    intervention: str,
+    supported_by: tuple[str, ...],
+) -> str:
+    if intervention == "validation":
+        return "The user feels understood enough to keep exploring."
+    if intervention == "gentle_check_in":
+        return "Minimal disclosure turns into one clearer next piece of context."
+    if intervention == "present_moment_grounding":
+        return "Activation drops enough for the next step to feel more workable."
+    if intervention == "cognitive_defusion":
+        return "The user has more distance from a sticky or identity-laden thought."
+    if intervention == "evidence_check":
+        return "Guesses, facts, and interpretations become easier to separate."
+    if intervention == "decatastrophizing":
+        return "The feared outcome becomes more specific and less totalizing."
+    if intervention in {"rebt_disputation", "unconditional_self_acceptance"}:
+        return "A rigid self-worth or demand belief loosens slightly."
+    if intervention in {"committed_action", "acceptance_committed_action"}:
+        return "Avoidance shifts into one small values-aligned action."
+    if intervention == "behavioral_experiment":
+        return "The belief becomes testable through a small real-world experiment."
+    if intervention == "values_clarification":
+        return "The user can name what matters underneath the difficulty."
+    if intervention == "self_compassion":
+        return "Shame softens enough to reduce self-attack."
+    if intervention == "safety_planning":
+        return "Immediate support and safety become clearer than problem-solving."
+    if supported_by:
+        return (
+            "The response targets "
+            f"{_format_label_text(list(supported_by[:2]))} in a more workable way."
+        )
+    return "The turn moves toward a clearer, more workable next step."
+
+
+def _test_signal_for_intervention(
+    intervention: str,
+    supported_by: tuple[str, ...],
+) -> str:
+    if intervention == "validation":
+        return "The user adds detail or says the reflection fits."
+    if intervention == "gentle_check_in":
+        return "The user can name what the feeling is about, even tentatively."
+    if intervention == "present_moment_grounding":
+        return "The user reports even a small drop in intensity or more steadiness."
+    if intervention == "cognitive_defusion":
+        return "The thought is described as a thought, not as settled fact."
+    if intervention == "evidence_check":
+        return "The user separates evidence from prediction or mind-reading."
+    if intervention in {"committed_action", "acceptance_committed_action"}:
+        return "The user identifies or tries one concrete next action."
+    if intervention == "behavioral_experiment":
+        return "The user can state a small test and what outcome would teach them."
+    if intervention in {"rebt_disputation", "unconditional_self_acceptance"}:
+        return "The user can weaken a must, awfulizing claim, or global self-rating."
+    if intervention == "values_clarification":
+        return "The user names a value, direction, or caring point."
+    if intervention == "self_compassion":
+        return "Self-criticism becomes less harsh or more contextual."
+    if intervention == "safety_planning":
+        return "The user states immediate safety status and a support option."
+    if supported_by:
+        return f"Look for a shift in {_format_label_text(list(supported_by[:2]))}."
+    return "Look for more clarity, steadiness, or action-readiness."
 
 
 def _unique_text(values: Any) -> list[str]:
@@ -1522,6 +2010,7 @@ def build_turn_trace(
         policy_context=turn.prepared.policy_context,
         policy_report=turn.prepared.policy_report,
         plan_coherence=turn.plan_coherence,
+        route=turn.prepared.route,
         include_prompts=include_prompts,
     )
 
@@ -1542,8 +2031,10 @@ def build_debug_trace(
     policy_context: str = "",
     policy_report: dict[str, Any] | None = None,
     plan_coherence: dict[str, Any] | None = None,
+    route: ConversationModeRoute | None = None,
     include_prompts: bool = False,
 ) -> dict[str, Any]:
+    route = route or route_conversation_mode(state.utterance)
     candidates = kernel_snapshot.get("candidates") or []
     recipes = kernel_snapshot.get("recipes") or []
     clarifying_moves = kernel_snapshot.get("clarifying_moves") or []
@@ -1552,6 +2043,13 @@ def build_debug_trace(
         response_plan.intervention,
     )
     selected_recipe = _recipe_for_intervention(recipes, response_plan.intervention)
+    counterfactuals = [
+        item.model_dump()
+        for item in simulate_counterfactual_interventions(
+            kernel_snapshot,
+            selected_intervention=response_plan.intervention,
+        )
+    ]
     backward_justification = None
     if response_plan.intervention:
         trace_kernel = TherapeuticReasoningKernel()
@@ -1572,6 +2070,8 @@ def build_debug_trace(
     trace: dict[str, Any] = {
         "pipeline": pipeline,
         "state_id": state.state_id,
+        "route": route.model_dump(),
+        "counterfactuals": counterfactuals,
         "extraction": _drop_empty(extraction.model_dump(exclude_none=True)),
         "kernel": {
             "operating_mode": kernel_snapshot.get("operating_mode") or {},
@@ -1582,6 +2082,7 @@ def build_debug_trace(
             "recipes": recipes,
             "intervention_deliberation": kernel_snapshot.get("intervention_deliberation")
             or {},
+            "counterfactual_simulation": counterfactuals,
         },
         "selection": {
             "intervention": response_plan.intervention,
@@ -1636,6 +2137,12 @@ def format_debug_trace(trace: dict[str, Any]) -> str:
     lines = ["Trace:"]
     lines.append(f"- state_id: {trace.get('state_id')}")
     lines.append(f"- pipeline: {' -> '.join(trace.get('pipeline', []))}")
+    route = trace.get("route") or {}
+    if route.get("mode"):
+        lines.append(
+            f"- mode_route: {route.get('label') or route.get('mode')} "
+            f"({route.get('mode')}): {route.get('reason')}"
+        )
 
     extraction = trace.get("extraction", {})
     lines.append("- extraction:")
@@ -1723,6 +2230,19 @@ def format_debug_trace(trace: dict[str, Any]) -> str:
             lines.append(
                 f"  {item.get('role')}: {item.get('intervention')} ({item.get('score')}){suffix}"
             )
+    else:
+        lines.append("  none")
+
+    counterfactuals = trace.get("counterfactuals") or kernel.get("counterfactual_simulation") or []
+    lines.append("- counterfactual simulation:")
+    if counterfactuals:
+        for item in counterfactuals[:4]:
+            lines.append(
+                f"  {item.get('role')}: {item.get('intervention')} -> "
+                f"{item.get('expected_shift')}"
+            )
+            if item.get("why"):
+                lines.append(f"    why: {item.get('why')}")
     else:
         lines.append("  none")
 
@@ -2038,7 +2558,11 @@ def main(argv: list[str] | None = None) -> int:
     )
 
 
-def draft_response_plan(kernel_snapshot: dict[str, Any]) -> ResponsePlan:
+def draft_response_plan(
+    kernel_snapshot: dict[str, Any],
+    *,
+    user_message: str = "",
+) -> ResponsePlan:
     """Deterministic dry-run plan preview from the top kernel candidate."""
 
     candidates = kernel_snapshot.get("candidates") or []
@@ -2056,6 +2580,7 @@ def draft_response_plan(kernel_snapshot: dict[str, Any]) -> ResponsePlan:
             _draft_consultative_response_plan(
                 str(intervention),
                 exercise=str(exercise) if exercise else None,
+                user_message=user_message,
             ),
             kernel_snapshot=kernel_snapshot,
         )
@@ -2091,6 +2616,7 @@ def _draft_consultative_response_plan(
     intervention: str,
     *,
     exercise: str | None,
+    user_message: str = "",
 ) -> ResponsePlan:
     if exercise in CONSULTATIVE_EXERCISE_TEMPLATES:
         exercise = None
@@ -2110,17 +2636,18 @@ def _draft_consultative_response_plan(
             tone_constraints=("friendly", "non-defensive", "supportive", "concise"),
         )
     if intervention == "concise_factual_answer":
+        factual_answer = _deterministic_factual_answer(user_message)
         return ResponsePlan(
-            validation="Happy to answer directly.",
-            hypothesis=(
-                "This looks like a neutral factual question, so I would keep it concise rather than turning it into a coaching intervention."
-            ),
+            validation=factual_answer
+            or "I can answer this as a concise factual question.",
+            hypothesis=None,
             intervention=intervention,
-            exercise=(
-                exercise
-                or "In live mode, answer the factual question directly and briefly. Empath's strongest area is coaching and emotional support, so keep any off-domain answer concise."
-            ),
-            question="Do you want the practical coaching angle on this too?",
+            exercise=None
+            if factual_answer
+            else "For arbitrary factual questions, use the live model path so Empath can answer directly instead of showing a kernel template.",
+            question=None
+            if factual_answer
+            else "Do you want to switch to the live model for the factual answer?",
             tone_constraints=("friendly", "concise", "consultative"),
         )
     if intervention == "advisory_recommendation":
@@ -2194,6 +2721,32 @@ def _draft_consultative_response_plan(
         question="What outcome are you trying to move toward?",
         tone_constraints=("friendly", "open", "encouraging", "consultative"),
     )
+
+
+def _deterministic_factual_answer(user_message: str) -> str | None:
+    """Tiny dry-run fact base so consultative tests do not leak prompt templates."""
+
+    lowered = user_message.casefold()
+    if "checksum" in lowered:
+        return (
+            "A checksum is a short value computed from data to help verify integrity. "
+            "If the data changes or is corrupted, recomputing the checksum will usually "
+            "produce a different value, which makes mismatches easier to detect."
+        )
+    if re.search(r"\bSSE\b|server-sent events?|eventsource", user_message, re.IGNORECASE):
+        return (
+            "SSE, or Server-Sent Events, is a simple HTTP streaming pattern where a "
+            "server pushes text events to a browser over one long-lived connection. "
+            "It is useful for one-way updates like assistant progress, notifications, "
+            "or logs."
+        )
+    if re.search(r"\bAPI\b|application programming interface", user_message, re.IGNORECASE):
+        return (
+            "An API is a defined way for software systems to communicate. It specifies "
+            "what requests can be made, what inputs are expected, and what responses "
+            "come back."
+        )
+    return None
 
 
 def _hypothesis_phrase(pattern: str) -> str:
@@ -2491,6 +3044,24 @@ def _clean_plan_text(text: str | None) -> str | None:
         return None
     cleaned = " ".join(text.split())
     if cleaned in _INTERNAL_PLAN_TEXTS:
+        return None
+    lowered_cleaned = cleaned.casefold()
+    internal_fragments = (
+        "in live mode, answer",
+        "answer directly in two to four concise sentences",
+        "this looks like a neutral factual question",
+        "rather than turning it into a coaching intervention",
+        "no therapeutic hypothesis needed",
+        "this is a factual request",
+        "not something that needs a therapeutic frame",
+        "rather than a therapeutic coaching turn",
+        "this looks like an advisory problem-solving request",
+        "this looks like an instructional request",
+        "this looks like an analytical request",
+        "this looks like an ideation request",
+        "this looks like an exploration request",
+    )
+    if any(fragment in lowered_cleaned for fragment in internal_fragments):
         return None
     blocked_phrases = (
         "No safety risk indicated",
