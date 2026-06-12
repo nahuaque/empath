@@ -8,7 +8,11 @@ import unittest
 import anyio
 from starlette.testclient import TestClient
 
-from empath.api import ChatMessage, _local_conversation_context, create_app as create_empath_app
+from empath.api import (
+    ChatMessage,
+    _local_conversation_context,
+    create_app as create_empath_app,
+)
 from empath.chat import DeterministicKernelGuidedCoach
 from empath.storage import SurrealStateBackend
 
@@ -146,7 +150,9 @@ class ApiSurfaceTests(unittest.TestCase):
         self.assertIn("displayRole", page.text)
         self.assertIn('source.addEventListener("formulation"', page.text)
         self.assertNotIn("position: fixed", page.text)
-        self.assertLess(page.text.index('id="mapTab"'), page.text.index('id="traceTab"'))
+        self.assertLess(
+            page.text.index('id="mapTab"'), page.text.index('id="traceTab"')
+        )
         self.assertIn(
             '<button class="side-tab active" id="mapTab" type="button" role="tab" aria-selected="true"',
             page.text,
@@ -179,7 +185,9 @@ class ApiSurfaceTests(unittest.TestCase):
         payload = response.json()
         self.assertIn("session_id", payload)
         self.assertIn("response", payload)
-        self.assertEqual(["user", "assistant"], [item["role"] for item in payload["messages"]])
+        self.assertEqual(
+            ["user", "assistant"], [item["role"] for item in payload["messages"]]
+        )
         self.assertFalse(payload["messages"][0]["trace_available"])
         self.assertTrue(payload["messages"][1]["trace_available"])
         self.assertEqual("coaching_turn", payload["messages"][1]["mode"])
@@ -187,7 +195,9 @@ class ApiSurfaceTests(unittest.TestCase):
         self.assertIn("standard coaching", payload["messages"][1]["mode_explanation"])
         self.assertIn("counterfactuals", payload["messages"][1])
         self.assertGreaterEqual(len(payload["messages"][1]["counterfactuals"]), 2)
-        self.assertEqual("selected", payload["messages"][1]["counterfactuals"][0]["role"])
+        self.assertEqual(
+            "selected", payload["messages"][1]["counterfactuals"][0]["role"]
+        )
         self.assertIn("expected_shift", payload["messages"][1]["counterfactuals"][0])
         self.assertNotIn("explanation", payload["messages"][1])
         self.assertIn("trace", payload)
@@ -207,7 +217,9 @@ class ApiSurfaceTests(unittest.TestCase):
         self.assertIn("formulation_delta", payload)
         self.assertTrue(payload["formulation"]["nodes"])
         self.assertIn("experiment", payload)
-        self.assertEqual(payload["experiment"]["id"], payload["messages"][1]["experiment"]["id"])
+        self.assertEqual(
+            payload["experiment"]["id"], payload["messages"][1]["experiment"]["id"]
+        )
         self.assertIn("prediction", payload["experiment"])
         self.assertIn("experiments", payload)
 
@@ -414,7 +426,10 @@ class ApiSurfaceTests(unittest.TestCase):
         self.assertEqual(200, second.status_code)
         self.assertEqual(200, session.status_code)
         messages = session.json()["messages"]
-        self.assertEqual(["user", "assistant", "user", "assistant"], [item["role"] for item in messages])
+        self.assertEqual(
+            ["user", "assistant", "user", "assistant"],
+            [item["role"] for item in messages],
+        )
         self.assertIn("sad", messages[0]["text"])
         self.assertIn("prototype", messages[2]["text"])
 
@@ -446,7 +461,9 @@ class ApiSurfaceTests(unittest.TestCase):
         self.assertEqual(200, first.status_code)
         self.assertEqual(200, retry.status_code)
         payload = retry.json()
-        self.assertEqual(["user", "assistant"], [item["role"] for item in payload["messages"]])
+        self.assertEqual(
+            ["user", "assistant"], [item["role"] for item in payload["messages"]]
+        )
         self.assertEqual("I'm feeling sad today.", payload["messages"][0]["text"])
         self.assertTrue(payload["messages"][1]["trace_available"])
         self.assertIn("trace", payload)
@@ -555,7 +572,9 @@ class ApiSurfaceTests(unittest.TestCase):
             ChatMessage(index=3, role="user", text="user turn 2"),
             ChatMessage(index=4, role="info", text="framework note between turns"),
             ChatMessage(index=5, role="assistant", text="coach turn 2"),
-            ChatMessage(index=6, role="reflection", text="reflective listening is out of band"),
+            ChatMessage(
+                index=6, role="reflection", text="reflective listening is out of band"
+            ),
             ChatMessage(index=7, role="user", text="user turn 3"),
             ChatMessage(index=8, role="assistant", text="coach turn 3"),
             ChatMessage(index=9, role="user", text="user turn 4"),
@@ -649,7 +668,9 @@ class ApiSurfaceTests(unittest.TestCase):
         )
 
         self.assertEqual(200, renamed.status_code)
-        renamed_active = [item for item in renamed.json()["workspaces"] if item["active"]]
+        renamed_active = [
+            item for item in renamed.json()["workspaces"] if item["active"]
+        ]
         self.assertEqual(["Leadership lab"], [item["title"] for item in renamed_active])
 
         deleted = client.request(
@@ -698,7 +719,9 @@ class ApiSurfaceTests(unittest.TestCase):
         )
 
         self.assertEqual(200, renamed.status_code)
-        renamed_active = [item for item in renamed.json()["conversations"] if item["active"]]
+        renamed_active = [
+            item for item in renamed.json()["conversations"] if item["active"]
+        ]
         self.assertEqual(["Board prep"], [item["title"] for item in renamed_active])
 
         deleted = client.request(
@@ -752,7 +775,9 @@ class ApiSurfaceTests(unittest.TestCase):
         self.assertEqual(200, response.status_code)
         payload = response.json()
         self.assertEqual("beta", payload["conversation_id"])
-        self.assertEqual(["user", "assistant"], [item["role"] for item in payload["messages"]])
+        self.assertEqual(
+            ["user", "assistant"], [item["role"] for item in payload["messages"]]
+        )
         self.assertTrue(payload["formulation"]["nodes"])
         self.assertEqual(
             {"alpha", "beta"},
@@ -850,7 +875,9 @@ class ApiSurfaceTests(unittest.TestCase):
         self.assertEqual(200, response.status_code)
         payload = response.json()
         self.assertEqual("real-conversation", payload["conversation_id"])
-        self.assertEqual(["user", "assistant"], [item["role"] for item in payload["messages"]])
+        self.assertEqual(
+            ["user", "assistant"], [item["role"] for item in payload["messages"]]
+        )
 
     def test_state_file_restores_conversations_and_workspace_map(self):
         with TemporaryDirectory() as tmpdir:
@@ -896,7 +923,9 @@ class ApiSurfaceTests(unittest.TestCase):
         self.assertEqual(200, response.status_code)
         payload = response.json()
         self.assertEqual("beta", payload["conversation_id"])
-        self.assertEqual(["user", "assistant"], [item["role"] for item in payload["messages"]])
+        self.assertEqual(
+            ["user", "assistant"], [item["role"] for item in payload["messages"]]
+        )
         self.assertEqual(
             {"alpha", "beta"},
             {item["conversation_id"] for item in payload["conversations"]},
@@ -939,7 +968,9 @@ class ApiSurfaceTests(unittest.TestCase):
         self.assertEqual(200, response.status_code)
         payload = response.json()
         self.assertEqual("alpha", payload["conversation_id"])
-        self.assertEqual(["user", "assistant"], [item["role"] for item in payload["messages"]])
+        self.assertEqual(
+            ["user", "assistant"], [item["role"] for item in payload["messages"]]
+        )
         self.assertTrue(payload["formulation"]["nodes"])
         self.assertGreaterEqual(backend.load_count, 2)
         self.assertGreaterEqual(backend.save_count, 1)
@@ -1022,7 +1053,9 @@ class ApiSurfaceTests(unittest.TestCase):
 
         self.assertEqual(200, response.status_code)
         payload = response.json()
-        self.assertEqual(["user", "info"], [item["role"] for item in payload["messages"]])
+        self.assertEqual(
+            ["user", "info"], [item["role"] for item in payload["messages"]]
+        )
         self.assertEqual("framework_note", payload["messages"][1]["mode"])
         self.assertEqual("Framework note", payload["messages"][1]["mode_label"])
         self.assertIn("ACT", payload["response"])
@@ -1056,7 +1089,9 @@ class ApiSurfaceTests(unittest.TestCase):
 
         self.assertEqual(200, response.status_code)
         payload = response.json()
-        self.assertEqual(["user", "assistant"], [item["role"] for item in payload["messages"]])
+        self.assertEqual(
+            ["user", "assistant"], [item["role"] for item in payload["messages"]]
+        )
         self.assertEqual("consultative_turn", payload["messages"][1]["mode"])
         self.assertEqual("Consultative", payload["messages"][1]["mode_label"])
         self.assertIn("information", payload["messages"][1]["mode_explanation"])
@@ -1098,7 +1133,9 @@ class ApiSurfaceTests(unittest.TestCase):
 
         self.assertEqual(200, response.status_code)
         payload = response.json()
-        self.assertEqual(["user", "info"], [item["role"] for item in payload["messages"]])
+        self.assertEqual(
+            ["user", "info"], [item["role"] for item in payload["messages"]]
+        )
         self.assertIn("MBSR", payload["response"])
         self.assertIn("mindfulness-based stress management", payload["response"])
         self.assertNotIn("trace", payload)
@@ -1139,14 +1176,18 @@ class ApiSurfaceTests(unittest.TestCase):
 
         response_event = next(data for event, data in events if event == "response")
         kernel_event = next(data for event, data in events if event == "kernel")
-        formulation_event = next(data for event, data in events if event == "formulation")
+        formulation_event = next(
+            data for event, data in events if event == "formulation"
+        )
         experiment_event = next(data for event, data in events if event == "experiment")
         self.assertIn("text", response_event)
         self.assertEqual("assistant", response_event["message"]["role"])
         self.assertTrue(response_event["message"]["trace_available"])
         self.assertNotIn("explanation", response_event["message"])
         self.assertEqual(experiment_event["id"], response_event["experiment"]["id"])
-        self.assertEqual(experiment_event["id"], response_event["message"]["experiment"]["id"])
+        self.assertEqual(
+            experiment_event["id"], response_event["message"]["experiment"]["id"]
+        )
         self.assertIn("counterfactuals", response_event["message"])
         self.assertGreaterEqual(len(response_event["message"]["counterfactuals"]), 2)
         self.assertIn("candidates", kernel_event)
@@ -1325,10 +1366,7 @@ class ApiSurfaceTests(unittest.TestCase):
         self.assertIn("longitudinal", payload["trace"])
         self.assertIn(
             "recurring anxiety avoidance loop",
-            {
-                item["label"]
-                for item in payload["trace"]["longitudinal"]
-            },
+            {item["label"] for item in payload["trace"]["longitudinal"]},
         )
 
     def test_formulation_feedback_updates_node_status(self):
@@ -1391,7 +1429,9 @@ class ApiSurfaceTests(unittest.TestCase):
         self.assertEqual([], response.json()["formulation"]["nodes"])
         self.assertEqual([], response.json()["formulation"]["edges"])
         self.assertEqual(0, response.json()["formulation"]["turn_count"])
-        self.assertEqual(["user", "assistant"], [item["role"] for item in session.json()["messages"]])
+        self.assertEqual(
+            ["user", "assistant"], [item["role"] for item in session.json()["messages"]]
+        )
         self.assertEqual([], session.json()["formulation"]["nodes"])
 
     def test_formulation_mirror_reflects_working_map(self):

@@ -106,7 +106,10 @@ class ACTSystem(TherapeuticSystem):
             ],
             [kernel.has_behavior(state, "rumination"), eq(pattern, "rumination")],
             [kernel.has_behavior(state, "inaction"), eq(pattern, "inaction")],
-            [kernel.state_feature(state, "values_unclear"), eq(pattern, "values_unclear")],
+            [
+                kernel.state_feature(state, "values_unclear"),
+                eq(pattern, "values_unclear"),
+            ],
             [
                 kernel.state_feature(state, "present_moment_disconnection"),
                 eq(pattern, "present_moment_disconnection"),
@@ -167,7 +170,10 @@ class ACTSystem(TherapeuticSystem):
             score += 0.75
         if "unwillingness" in patterns and intervention == "willingness_practice":
             score += 1.25
-        if "values_action_gap" in patterns and intervention == "values_aligned_next_step":
+        if (
+            "values_action_gap" in patterns
+            and intervention == "values_aligned_next_step"
+        ):
             score += 1.5
         return score
 
@@ -211,9 +217,15 @@ class ACTSystem(TherapeuticSystem):
         item = var()
         return conde(
             [kernel.has_value(state, item), kernel.has_behavior(state, "avoidance")],
-            [kernel.has_value(state, item), kernel.has_behavior(state, "procrastination")],
+            [
+                kernel.has_value(state, item),
+                kernel.has_behavior(state, "procrastination"),
+            ],
             [kernel.has_value(state, item), kernel.has_behavior(state, "inaction")],
             [kernel.has_goal(state, item), kernel.has_behavior(state, "avoidance")],
-            [kernel.has_goal(state, item), kernel.has_behavior(state, "procrastination")],
+            [
+                kernel.has_goal(state, item),
+                kernel.has_behavior(state, "procrastination"),
+            ],
             [kernel.has_goal(state, item), kernel.has_behavior(state, "inaction")],
         )

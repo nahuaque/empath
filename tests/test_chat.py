@@ -271,7 +271,10 @@ class ChatWorkflowTests(unittest.TestCase):
         self.assertIn("- tasks: prepare investor presentation", prompt)
         self.assertIn("- stakes: investor judgment", prompt)
         self.assertIn("Therapeutic kernel output", prompt)
-        self.assertIn("concerns, tasks, challenges, objectives, stakes, and domains", RESPONSE_PLAN_INSTRUCTIONS)
+        self.assertIn(
+            "concerns, tasks, challenges, objectives, stakes, and domains",
+            RESPONSE_PLAN_INSTRUCTIONS,
+        )
         self.assertIn("make the exercise name that", RESPONSE_PLAN_INSTRUCTIONS)
         self.assertIn("intervention_deliberation", RESPONSE_PLAN_INSTRUCTIONS)
         self.assertIn("consultative facilitation", RESPONSE_PLAN_INSTRUCTIONS)
@@ -368,7 +371,9 @@ class ChatWorkflowTests(unittest.TestCase):
         self.assertIn("project goal.", rendered)
         self.assertNotIn(".?", rendered)
 
-    def test_response_plan_sanitizer_removes_internal_safety_note_and_extra_question(self):
+    def test_response_plan_sanitizer_removes_internal_safety_note_and_extra_question(
+        self,
+    ):
         kernel = TherapeuticReasoningKernel()
         kernel.add_state(
             state_from_extraction(
@@ -554,7 +559,9 @@ class ChatWorkflowTests(unittest.TestCase):
 
         self.assertEqual("safety_planning", coherent.intervention)
         self.assertIsNotNone(coherent.safety_note)
-        self.assertIn("safety_plan_required", {item["code"] for item in report["issues"]})
+        self.assertIn(
+            "safety_plan_required", {item["code"] for item in report["issues"]}
+        )
 
     def test_raw_user_message_preserves_dropped_identity_and_mind_reading_clauses(self):
         extraction = ExtractedCoachingState(
@@ -596,7 +603,9 @@ class ChatWorkflowTests(unittest.TestCase):
         self.assertIn(("rebt", "demandingness"), hypotheses)
         self.assertIn(("act", "fusion"), hypotheses)
 
-    def test_response_plan_sanitizer_aligns_low_rank_intervention_to_kernel_candidate(self):
+    def test_response_plan_sanitizer_aligns_low_rank_intervention_to_kernel_candidate(
+        self,
+    ):
         kernel = TherapeuticReasoningKernel()
         state = state_from_extraction(
             ExtractedCoachingState(
@@ -728,7 +737,9 @@ class ChatWorkflowTests(unittest.TestCase):
         self.assertIn("matched_candidate_score", formatted)
         self.assertIn("matched_recipe", formatted)
 
-    def test_intervention_deliberation_selects_active_move_and_keeps_counterfactuals(self):
+    def test_intervention_deliberation_selects_active_move_and_keeps_counterfactuals(
+        self,
+    ):
         snapshot = with_intervention_deliberation(
             {
                 "hypotheses": [],
@@ -737,7 +748,9 @@ class ChatWorkflowTests(unittest.TestCase):
                         "intervention": "validation",
                         "score": 8.0,
                         "modality": ("common_factors",),
-                        "hypotheses": [{"source": "policy", "pattern": "needs_validation"}],
+                        "hypotheses": [
+                            {"source": "policy", "pattern": "needs_validation"}
+                        ],
                         "exercise": None,
                     },
                     {

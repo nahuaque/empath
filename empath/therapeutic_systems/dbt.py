@@ -141,7 +141,10 @@ class DBTSystem(TherapeuticSystem):
             and intervention == "interpersonal_effectiveness_script"
         ):
             score += 1.25
-        if "mindfulness_need" in patterns and intervention == "mindfulness_observe_describe":
+        if (
+            "mindfulness_need" in patterns
+            and intervention == "mindfulness_observe_describe"
+        ):
             score += 0.5
         if "self_invalidation" in patterns and intervention == "self_validation":
             score += 1.5
@@ -152,7 +155,10 @@ class DBTSystem(TherapeuticSystem):
                 score += 1.5
             if intervention == "self_soothing":
                 score += 0.5
-        if "dialectical_stuckness" in patterns and intervention == "dialectical_reframe":
+        if (
+            "dialectical_stuckness" in patterns
+            and intervention == "dialectical_reframe"
+        ):
             score += 1.0
         return score
 

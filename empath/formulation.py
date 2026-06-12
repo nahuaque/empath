@@ -88,7 +88,9 @@ class FormulationDelta(BaseModel):
     updated_nodes: tuple[FormulationNode, ...] = Field(default_factory=tuple)
     added_edges: tuple[FormulationEdge, ...] = Field(default_factory=tuple)
     updated_edges: tuple[FormulationEdge, ...] = Field(default_factory=tuple)
-    longitudinal_patterns: tuple[LongitudinalPattern, ...] = Field(default_factory=tuple)
+    longitudinal_patterns: tuple[LongitudinalPattern, ...] = Field(
+        default_factory=tuple
+    )
     graph: FormulationGraph
 
 
@@ -218,7 +220,9 @@ class CaseMemory:
         added_edge_ids: set[str] = set()
         updated_edge_ids: set[str] = set()
 
-        def provenance(source: str, field: str, evidence: str | None = None) -> FormulationProvenance:
+        def provenance(
+            source: str, field: str, evidence: str | None = None
+        ) -> FormulationProvenance:
             return FormulationProvenance(
                 turn=turn,
                 source=source,
@@ -261,8 +265,12 @@ class CaseMemory:
             existing.last_seen_turn = turn
             existing.seen_count += 1
             if existing.status == "tentative":
-                existing.confidence = min(0.95, max(existing.confidence, confidence) + 0.04)
-            existing.provenance = _append_provenance(existing.provenance, item_provenance)
+                existing.confidence = min(
+                    0.95, max(existing.confidence, confidence) + 0.04
+                )
+            existing.provenance = _append_provenance(
+                existing.provenance, item_provenance
+            )
             if node_id not in added_node_ids:
                 updated_node_ids.add(node_id)
             return node_id
@@ -308,8 +316,12 @@ class CaseMemory:
             existing.last_seen_turn = turn
             existing.seen_count += 1
             if existing.status == "tentative":
-                existing.confidence = min(0.9, max(existing.confidence, confidence) + 0.03)
-            existing.provenance = _append_provenance(existing.provenance, item_provenance)
+                existing.confidence = min(
+                    0.9, max(existing.confidence, confidence) + 0.03
+                )
+            existing.provenance = _append_provenance(
+                existing.provenance, item_provenance
+            )
             if edge_id not in added_edge_ids:
                 updated_edge_ids.add(edge_id)
             return edge_id
@@ -606,7 +618,9 @@ class CaseMemory:
         text_node_ids = {
             _normalize_evidence_text(label): node_id
             for label, node_id in [
-                *zip(_values(extraction_data.get("thoughts")), thought_ids, strict=False),
+                *zip(
+                    _values(extraction_data.get("thoughts")), thought_ids, strict=False
+                ),
                 *zip(_values(extraction_data.get("beliefs")), belief_ids, strict=False),
             ]
         }
@@ -653,7 +667,14 @@ class CaseMemory:
                     evidence="same turn",
                 )
         for domain_id in domain_ids[:4]:
-            for target_id in [*concern_ids, *task_ids, *project_ids, *objective_ids, *stake_ids, *goal_ids][:8]:
+            for target_id in [
+                *concern_ids,
+                *task_ids,
+                *project_ids,
+                *objective_ids,
+                *stake_ids,
+                *goal_ids,
+            ][:8]:
                 upsert_edge(
                     domain_id,
                     target_id,
@@ -747,7 +768,13 @@ class CaseMemory:
                     confidence=0.62,
                 )
         for challenge_id in challenge_ids[:4]:
-            for target_id in [*task_ids, *project_ids, *objective_ids, *goal_ids, *behavior_ids][:8]:
+            for target_id in [
+                *task_ids,
+                *project_ids,
+                *objective_ids,
+                *goal_ids,
+                *behavior_ids,
+            ][:8]:
                 upsert_edge(
                     challenge_id,
                     target_id,
@@ -757,7 +784,13 @@ class CaseMemory:
                     confidence=0.58,
                 )
         for obstacle_id in obstacle_ids[:4]:
-            for target_id in [*next_action_ids, *task_ids, *project_ids, *objective_ids, *goal_ids][:8]:
+            for target_id in [
+                *next_action_ids,
+                *task_ids,
+                *project_ids,
+                *objective_ids,
+                *goal_ids,
+            ][:8]:
                 upsert_edge(
                     obstacle_id,
                     target_id,
@@ -949,7 +982,9 @@ class CaseMemory:
                 pattern_node = self._nodes[pattern_id]
                 pattern_node.first_seen_turn = min(pattern.turns)
                 pattern_node.last_seen_turn = max(pattern.turns)
-                pattern_node.seen_count = max(pattern_node.seen_count, len(pattern.turns))
+                pattern_node.seen_count = max(
+                    pattern_node.seen_count, len(pattern.turns)
+                )
             for support in pattern.support:
                 support_id = _node_id(support.kind, support.label)
                 upsert_edge(
@@ -965,12 +1000,18 @@ class CaseMemory:
         self.compact()
         graph = self.snapshot()
         added_nodes = tuple(self._nodes[node_id] for node_id in sorted(added_node_ids))
-        updated_nodes = tuple(self._nodes[node_id] for node_id in sorted(updated_node_ids))
+        updated_nodes = tuple(
+            self._nodes[node_id] for node_id in sorted(updated_node_ids)
+        )
         added_edges = tuple(self._edges[edge_id] for edge_id in sorted(added_edge_ids))
-        updated_edges = tuple(self._edges[edge_id] for edge_id in sorted(updated_edge_ids))
+        updated_edges = tuple(
+            self._edges[edge_id] for edge_id in sorted(updated_edge_ids)
+        )
         return FormulationDelta(
             turn=turn,
-            summary=_delta_summary(added_nodes, updated_nodes, added_edges, updated_edges),
+            summary=_delta_summary(
+                added_nodes, updated_nodes, added_edges, updated_edges
+            ),
             added_nodes=added_nodes,
             updated_nodes=updated_nodes,
             added_edges=added_edges,
@@ -1014,7 +1055,9 @@ class CaseMemory:
         else:  # pragma: no cover - protected by pydantic/API types
             raise ValueError(f"Unknown feedback action: {action}")
         node.provenance = _append_provenance(node.provenance, feedback_provenance)
-        return FormulationFeedbackResult(node=node.model_copy(deep=True), graph=self.snapshot())
+        return FormulationFeedbackResult(
+            node=node.model_copy(deep=True), graph=self.snapshot()
+        )
 
     def clear(self) -> FormulationGraph:
         """Reset the working formulation while preserving memory configuration."""
@@ -1043,21 +1086,11 @@ class CaseMemory:
             if node.status not in {"archived", "rejected", "removed"}
         ]
         protected_ids = {
-            node.id
-            for node in active_nodes
-            if self._is_protected_active_node(node)
+            node.id for node in active_nodes if self._is_protected_active_node(node)
         }
         available_slots = max(self.active_node_limit - len(protected_ids), 0)
-        optional_nodes = [
-            node
-            for node in active_nodes
-            if node.id not in protected_ids
-        ]
+        optional_nodes = [node for node in active_nodes if node.id not in protected_ids]
         optional_nodes.sort(key=self._node_priority, reverse=True)
-        keep_ids = protected_ids | {
-            node.id
-            for node in optional_nodes[:available_slots]
-        }
         for node in optional_nodes[available_slots:]:
             node.status = "archived"
 
@@ -1082,11 +1115,8 @@ class CaseMemory:
             and edge.target in active_node_ids
         ]
         active_edges.sort(key=self._edge_priority, reverse=True)
-        keep_edge_ids = {
-            edge.id
-            for edge in active_edges[: self.active_edge_limit]
-        }
-        for edge in active_edges[self.active_edge_limit:]:
+        keep_edge_ids = {edge.id for edge in active_edges[: self.active_edge_limit]}
+        for edge in active_edges[self.active_edge_limit :]:
             if edge.id not in keep_edge_ids:
                 edge.status = "archived"
 
@@ -1200,7 +1230,9 @@ class CaseMemory:
     def longitudinal_patterns(self) -> tuple[LongitudinalPattern, ...]:
         """Current tentative multi-turn patterns."""
 
-        return tuple(pattern.model_copy(deep=True) for pattern in self._longitudinal_patterns)
+        return tuple(
+            pattern.model_copy(deep=True) for pattern in self._longitudinal_patterns
+        )
 
     def longitudinal_context(self, *, limit: int = 4) -> str:
         """Compact context string for the response planner."""
@@ -1212,7 +1244,9 @@ class CaseMemory:
         for pattern in patterns:
             turns = ", ".join(str(turn) for turn in pattern.turns)
             lines.append(f"- {pattern.label}: {pattern.description} (turns {turns})")
-        lines.append("Use these only as hypotheses to hold lightly and invite correction.")
+        lines.append(
+            "Use these only as hypotheses to hold lightly and invite correction."
+        )
         return "\n".join(lines)
 
     def mirror(self) -> FormulationMirror:
@@ -1250,7 +1284,9 @@ def mirror_formulation(graph: FormulationGraph) -> FormulationMirror:
     projects = _top_labels(by_kind, "project", limit=2, selected=selected)
     next_actions = _top_labels(by_kind, "next_action", limit=2, selected=selected)
     obstacles = _top_labels(by_kind, "obstacle", limit=2, selected=selected)
-    success_measures = _top_labels(by_kind, "success_measure", limit=2, selected=selected)
+    success_measures = _top_labels(
+        by_kind, "success_measure", limit=2, selected=selected
+    )
     stakes = _top_labels(by_kind, "stake", limit=2, selected=selected)
     thoughts = _top_labels(by_kind, "thought", limit=2, selected=selected)
     beliefs = _top_labels(by_kind, "belief", limit=2, selected=selected)
@@ -1264,7 +1300,9 @@ def mirror_formulation(graph: FormulationGraph) -> FormulationMirror:
 
     lines = ["If I mirror this back as a working hypothesis:"]
     if domains:
-        lines.append(f"The area of life or work that stands out is {_join_labels(domains)}.")
+        lines.append(
+            f"The area of life or work that stands out is {_join_labels(domains)}."
+        )
     if situations:
         lines.append(f"The context that stands out is {_join_labels(situations)}.")
     if concerns or tasks or objectives or projects:
@@ -1295,11 +1333,15 @@ def mirror_formulation(graph: FormulationGraph) -> FormulationMirror:
             pressure_parts.append(f"the stakes around {_join_labels(stakes)}")
         lines.append(f"What gives it pressure may be {_join_labels(pressure_parts)}.")
     if thoughts or beliefs:
-        lines.append(f"Around that, the mind seems to offer {_quote_labels([*thoughts, *beliefs])}.")
+        lines.append(
+            f"Around that, the mind seems to offer {_quote_labels([*thoughts, *beliefs])}."
+        )
     if emotions:
         lines.append(f"Emotionally, the map is carrying {_join_labels(emotions)}.")
     if urges or behaviors:
-        lines.append(f"The pull seems to be toward {_join_labels([*urges, *behaviors])}.")
+        lines.append(
+            f"The pull seems to be toward {_join_labels([*urges, *behaviors])}."
+        )
     if values or goals:
         lines.append(
             "At the same time, "
@@ -1315,7 +1357,9 @@ def mirror_formulation(graph: FormulationGraph) -> FormulationMirror:
             "So the response has been leaning toward "
             f"{_join_labels([_humanize(label) for label in interventions])}."
         )
-    lines.append("Any part of that may be wrong; the useful move is to correct the map.")
+    lines.append(
+        "Any part of that may be wrong; the useful move is to correct the map."
+    )
 
     return FormulationMirror(
         text="\n\n".join(lines),
@@ -1406,7 +1450,11 @@ def _clean_hypothesis(label: str) -> str:
     if ":" not in cleaned:
         return cleaned
     source, pattern = cleaned.split(":", 1)
-    source = source.strip().upper() if source.strip() in {"act", "cbt", "rebt"} else source.strip()
+    source = (
+        source.strip().upper()
+        if source.strip() in {"act", "cbt", "rebt"}
+        else source.strip()
+    )
     return f"{source} {pattern.strip()}"
 
 
@@ -1479,7 +1527,9 @@ def _edge_kind_priority(kind: str) -> float:
 
 
 def _node_id(kind: str, label: str) -> str:
-    digest = hashlib.sha1(f"{kind}:{_normalize_evidence_text(label)}".encode()).hexdigest()
+    digest = hashlib.sha1(
+        f"{kind}:{_normalize_evidence_text(label)}".encode()
+    ).hexdigest()
     return f"{kind}:{digest[:12]}"
 
 
@@ -1503,7 +1553,9 @@ def _append_provenance(
     limit: int = 8,
 ) -> tuple[FormulationProvenance, ...]:
     key = (item.turn, item.source, item.field, item.evidence)
-    if any((prov.turn, prov.source, prov.field, prov.evidence) == key for prov in existing):
+    if any(
+        (prov.turn, prov.source, prov.field, prov.evidence) == key for prov in existing
+    ):
         return existing
     return (*existing, item)[-limit:]
 

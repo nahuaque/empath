@@ -96,7 +96,10 @@ class MBSRSystem(TherapeuticSystem):
             score += 1.5
         if "rumination_stress" in patterns and intervention == "mindful_observe_return":
             score += 2.0
-        if "vulnerability_stress" in patterns and intervention == "mindful_self_care_check":
+        if (
+            "vulnerability_stress" in patterns
+            and intervention == "mindful_self_care_check"
+        ):
             score += 1.25
         return score
 

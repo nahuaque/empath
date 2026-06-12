@@ -129,9 +129,15 @@ class CBTSystem(TherapeuticSystem):
 
     def score_bonus(self, intervention: str, patterns: set[str]) -> float:
         score = 0.0
-        if "discounting_positive" in patterns and intervention == "strength_evidence_log":
+        if (
+            "discounting_positive" in patterns
+            and intervention == "strength_evidence_log"
+        ):
             score += 1.25
-        if "emotional_reasoning" in patterns and intervention == "emotion_fact_separation":
+        if (
+            "emotional_reasoning" in patterns
+            and intervention == "emotion_fact_separation"
+        ):
             score += 1.25
         if "personalization" in patterns and intervention == "responsibility_pie":
             score += 1.25

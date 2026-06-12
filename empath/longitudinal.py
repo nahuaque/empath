@@ -335,7 +335,12 @@ class LongitudinalPatternDetector:
     def _turns_for_signal(self, signal: str) -> tuple[int, ...]:
         turn_var = var()
         return tuple(
-            sorted({int(turn) for turn in run(0, turn_var, self.turn_signal(turn_var, signal))})
+            sorted(
+                {
+                    int(turn)
+                    for turn in run(0, turn_var, self.turn_signal(turn_var, signal))
+                }
+            )
         )
 
     def _support_for(
@@ -432,7 +437,10 @@ def _derive_signals(
             add("vulnerability", "hypothesis", label)
         if source == "emotion" and pattern in {"anxiety", "shame", "overwhelm"}:
             add("distress", "hypothesis", label)
-        if (source, pattern) in {("policy", "high_distress"), ("loop", "high_distress_gating")}:
+        if (source, pattern) in {
+            ("policy", "high_distress"),
+            ("loop", "high_distress_gating"),
+        }:
             add("high_distress", "hypothesis", label)
 
     return signals, {signal: tuple(items) for signal, items in support.items()}
@@ -498,7 +506,9 @@ _GENERIC_REPEAT_SKIP = {
 
 
 def _confidence(turn_count: int, support_count: int) -> float:
-    return min(0.88, round(0.62 + 0.08 * max(0, turn_count - 2) + 0.01 * support_count, 2))
+    return min(
+        0.88, round(0.62 + 0.08 * max(0, turn_count - 2) + 0.01 * support_count, 2)
+    )
 
 
 def _unique_patterns(patterns: list[LongitudinalPattern]) -> list[LongitudinalPattern]:

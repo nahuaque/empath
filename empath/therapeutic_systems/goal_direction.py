@@ -123,14 +123,35 @@ class GoalDirectionSystem(TherapeuticSystem):
         )
         facts(
             kernel.recipe_rationale,
-            ("values_to_objective", "Translate values into a concrete objective and one observable measure."),
-            ("objective_to_next_action", "Keep the goal from staying abstract by naming the next visible action."),
-            ("woop_then_next_action", "Plan for the predictable obstacle before asking for follow-through."),
-            ("capture_clarify_engage", "Reduce mental clutter, clarify one next action, then engage."),
-            ("kanban_limit_choose", "Limit active work so execution is not overloaded by too many simultaneous commitments."),
+            (
+                "values_to_objective",
+                "Translate values into a concrete objective and one observable measure.",
+            ),
+            (
+                "objective_to_next_action",
+                "Keep the goal from staying abstract by naming the next visible action.",
+            ),
+            (
+                "woop_then_next_action",
+                "Plan for the predictable obstacle before asking for follow-through.",
+            ),
+            (
+                "capture_clarify_engage",
+                "Reduce mental clutter, clarify one next action, then engage.",
+            ),
+            (
+                "kanban_limit_choose",
+                "Limit active work so execution is not overloaded by too many simultaneous commitments.",
+            ),
             ("if_then_start_plan", "Pair a likely obstacle with a tiny start plan."),
-            ("review_learn_recommit", "Treat execution as a learning loop and recommit to the next action."),
-            ("objective_measure_action", "Make progress observable, then choose the next behavior."),
+            (
+                "review_learn_recommit",
+                "Treat execution as a learning loop and recommit to the next action.",
+            ),
+            (
+                "objective_measure_action",
+                "Make progress observable, then choose the next behavior.",
+            ),
         )
         facts(
             kernel.formulation_pattern,
@@ -277,7 +298,10 @@ class GoalDirectionSystem(TherapeuticSystem):
                 score += 0.25
         if "wip_overload" in patterns and intervention == "limit_work_in_progress":
             score += 0.0
-        if "values_to_objective_gap" in patterns and intervention == "clarify_objective":
+        if (
+            "values_to_objective_gap" in patterns
+            and intervention == "clarify_objective"
+        ):
             score += 0.75
         if "implementation_intention_need" in patterns:
             if intervention == "implementation_intention":
@@ -286,7 +310,10 @@ class GoalDirectionSystem(TherapeuticSystem):
                 score += 0.5
         if "review_recommitment_needed" in patterns and intervention == "weekly_review":
             score += 0.0
-        if "success_measure_missing" in patterns and intervention == "define_success_measure":
+        if (
+            "success_measure_missing" in patterns
+            and intervention == "define_success_measure"
+        ):
             score += 0.75
         return score
 

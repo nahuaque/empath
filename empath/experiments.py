@@ -70,10 +70,7 @@ class ExperimentStore:
 
         self._experiments = {
             item.id: item
-            for item in (
-                CoachingExperiment.model_validate(raw)
-                for raw in (data or ())
-            )
+            for item in (CoachingExperiment.model_validate(raw) for raw in (data or ()))
         }
 
     def propose(
@@ -136,16 +133,19 @@ def propose_experiment(
     plan = getattr(turn, "response_plan", None)
     prepared = getattr(turn, "prepared", None)
     kernel_snapshot = getattr(prepared, "kernel_snapshot", {}) or {}
-    intervention = _clean_label(getattr(plan, "intervention", None)) or "gentle_check_in"
+    intervention = (
+        _clean_label(getattr(plan, "intervention", None)) or "gentle_check_in"
+    )
     plan_exercise = _clean_text(getattr(plan, "exercise", None))
     plan_question = _clean_text(getattr(plan, "question", None))
     selected = _candidate_for_intervention(kernel_snapshot, intervention)
     selected_hypotheses = _hypotheses(selected) or tuple(
-        _as_mapping(item)
-        for item in (kernel_snapshot.get("hypotheses") or ())
+        _as_mapping(item) for item in (kernel_snapshot.get("hypotheses") or ())
     )
     pattern = _primary_pattern(selected_hypotheses)
-    emotion = _primary_emotion(getattr(prepared, "extraction", None), selected_hypotheses)
+    emotion = _primary_emotion(
+        getattr(prepared, "extraction", None), selected_hypotheses
+    )
     focus = _focus_label(selected_hypotheses, pattern)
     template = _template_for(intervention, pattern)
     action = _action_for(
@@ -343,7 +343,10 @@ def _template_for(intervention: str, pattern: str) -> dict[str, str]:
         return _TEMPLATES["review_test"]
     if intervention == "weekly_review":
         return _TEMPLATES["review_test"]
-    if pattern in {"minimal_disclosure", "sadness", "anxiety"} or "minimal_disclosure" in pattern:
+    if (
+        pattern in {"minimal_disclosure", "sadness", "anxiety"}
+        or "minimal_disclosure" in pattern
+    ):
         return _TEMPLATES["gentle_observation"]
     return _TEMPLATES["generic"]
 
@@ -463,7 +466,11 @@ def _action_for(
     plan_question: str | None,
 ) -> str:
     if not plan_exercise:
-        if plan_question and intervention not in {"validation", "gentle_check_in", "needs_exploration"}:
+        if plan_question and intervention not in {
+            "validation",
+            "gentle_check_in",
+            "needs_exploration",
+        }:
             return f"Answer this prompt in one or two sentences: {plan_question}"
         return template_action
     if intervention in {"validation", "gentle_check_in", "needs_exploration"}:

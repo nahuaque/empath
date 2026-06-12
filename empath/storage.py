@@ -412,7 +412,11 @@ async def _explanation_evidence(
         node_id = _string_or_empty(node.get("node_id"))
         if not node_id:
             continue
-        if selected_intervention and kind == "intervention" and label == selected_intervention:
+        if (
+            selected_intervention
+            and kind == "intervention"
+            and label == selected_intervention
+        ):
             selected_node_ids.add(node_id)
         if kind == "hypothesis" and label in selected_patterns:
             selected_node_ids.add(node_id)
@@ -457,9 +461,7 @@ async def _explanation_evidence(
     experiments = [item for item in experiments if isinstance(item, Mapping)]
 
     supporting_nodes = [
-        nodes_by_id[node_id]
-        for node_id in selected_node_ids
-        if node_id in nodes_by_id
+        nodes_by_id[node_id] for node_id in selected_node_ids if node_id in nodes_by_id
     ]
     supporting_nodes.sort(
         key=lambda item: (
@@ -527,8 +529,12 @@ async def _compaction_summary(
     )
     return {
         **summary,
-        "active_examples": [dict(item) for item in active_nodes if isinstance(item, Mapping)],
-        "hidden_examples": [dict(item) for item in hidden_nodes if isinstance(item, Mapping)],
+        "active_examples": [
+            dict(item) for item in active_nodes if isinstance(item, Mapping)
+        ],
+        "hidden_examples": [
+            dict(item) for item in hidden_nodes if isinstance(item, Mapping)
+        ],
     }
 
 
@@ -854,7 +860,9 @@ def _format_memory_context(packet: Mapping[str, Any]) -> str:
                     f"{_string_or_empty(item.get('kind')).replace('_', ' ')} -> "
                     f"{_compact_memory_line(item.get('target_label'))}"
                 )
-    lines.append("Use this memory lightly; ask or invite correction if continuity is uncertain.")
+    lines.append(
+        "Use this memory lightly; ask or invite correction if continuity is uncertain."
+    )
     return "\n".join(lines)
 
 
@@ -890,7 +898,9 @@ def _compact_memory_line(value: Any, *, limit: int = 130) -> str:
 
 
 def _selected_intervention(trace: Mapping[str, Any]) -> str:
-    selection = trace.get("selection") if isinstance(trace.get("selection"), Mapping) else {}
+    selection = (
+        trace.get("selection") if isinstance(trace.get("selection"), Mapping) else {}
+    )
     matched = (
         selection.get("matched_candidate")
         if isinstance(selection.get("matched_candidate"), Mapping)
@@ -902,7 +912,9 @@ def _selected_intervention(trace: Mapping[str, Any]) -> str:
 
 
 def _selected_hypothesis_labels(trace: Mapping[str, Any]) -> set[str]:
-    selection = trace.get("selection") if isinstance(trace.get("selection"), Mapping) else {}
+    selection = (
+        trace.get("selection") if isinstance(trace.get("selection"), Mapping) else {}
+    )
     matched = (
         selection.get("matched_candidate")
         if isinstance(selection.get("matched_candidate"), Mapping)
@@ -960,18 +972,42 @@ async def _project_workspace(
     workspace: Mapping[str, Any],
 ) -> None:
     workspace_key = _workspace_key(user_id, workspace_id)
-    memory = workspace.get("memory") if isinstance(workspace.get("memory"), Mapping) else {}
-    conversations = (
-        workspace.get("conversations") if isinstance(workspace.get("conversations"), Mapping) else {}
+    memory = (
+        workspace.get("memory") if isinstance(workspace.get("memory"), Mapping) else {}
     )
-    experiments = workspace.get("experiments") if isinstance(workspace.get("experiments"), list) else []
-    nodes = memory.get("nodes") if isinstance(memory, Mapping) and isinstance(memory.get("nodes"), list) else []
-    edges = memory.get("edges") if isinstance(memory, Mapping) and isinstance(memory.get("edges"), list) else []
-    turn_count = _int_or_zero(memory.get("turn_count") if isinstance(memory, Mapping) else None)
+    conversations = (
+        workspace.get("conversations")
+        if isinstance(workspace.get("conversations"), Mapping)
+        else {}
+    )
+    experiments = (
+        workspace.get("experiments")
+        if isinstance(workspace.get("experiments"), list)
+        else []
+    )
+    nodes = (
+        memory.get("nodes")
+        if isinstance(memory, Mapping) and isinstance(memory.get("nodes"), list)
+        else []
+    )
+    edges = (
+        memory.get("edges")
+        if isinstance(memory, Mapping) and isinstance(memory.get("edges"), list)
+        else []
+    )
+    turn_count = _int_or_zero(
+        memory.get("turn_count") if isinstance(memory, Mapping) else None
+    )
     policy_config = {
-        "active_node_limit": _int_or_zero(memory.get("active_node_limit") if isinstance(memory, Mapping) else None),
-        "active_edge_limit": _int_or_zero(memory.get("active_edge_limit") if isinstance(memory, Mapping) else None),
-        "archive_after_turns": _int_or_zero(memory.get("archive_after_turns") if isinstance(memory, Mapping) else None),
+        "active_node_limit": _int_or_zero(
+            memory.get("active_node_limit") if isinstance(memory, Mapping) else None
+        ),
+        "active_edge_limit": _int_or_zero(
+            memory.get("active_edge_limit") if isinstance(memory, Mapping) else None
+        ),
+        "archive_after_turns": _int_or_zero(
+            memory.get("archive_after_turns") if isinstance(memory, Mapping) else None
+        ),
     }
     node_policies = _node_compaction_policies(
         nodes,
@@ -979,9 +1015,7 @@ async def _project_workspace(
         archive_after_turns=policy_config["archive_after_turns"],
     )
     active_node_ids = {
-        node_id
-        for node_id, policy in node_policies.items()
-        if policy["active_in_map"]
+        node_id for node_id, policy in node_policies.items() if policy["active_in_map"]
     }
     edge_policies = _edge_compaction_policies(
         edges,
@@ -1085,7 +1119,11 @@ async def _project_conversation(
     conversation: Mapping[str, Any],
 ) -> None:
     conversation_key = _conversation_key(user_id, workspace_id, conversation_id)
-    transcript = conversation.get("transcript") if isinstance(conversation.get("transcript"), list) else []
+    transcript = (
+        conversation.get("transcript")
+        if isinstance(conversation.get("transcript"), list)
+        else []
+    )
     await db.upsert(
         _projection_record_id("empath_conversation", app_record, conversation_key),
         {
@@ -1338,7 +1376,9 @@ async def _project_experiment(
     if not experiment_id:
         return
     await db.upsert(
-        _projection_record_id("coaching_experiment", app_record, workspace_key, experiment_id),
+        _projection_record_id(
+            "coaching_experiment", app_record, workspace_key, experiment_id
+        ),
         {
             "app_record": app_record,
             "workspace_key": workspace_key,

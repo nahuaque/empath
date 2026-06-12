@@ -135,7 +135,9 @@ class TherapeuticReasoningKernelTests(unittest.TestCase):
             )
         )
 
-        hypotheses = {(item.source, item.pattern) for item in kernel.hypotheses_for("prototype")}
+        hypotheses = {
+            (item.source, item.pattern) for item in kernel.hypotheses_for("prototype")
+        }
         self.assertIn(("act", "experiential_avoidance"), hypotheses)
         self.assertIn(("act", "fusion"), hypotheses)
         self.assertIn(("cbt", "global_labeling"), hypotheses)
@@ -244,7 +246,9 @@ class TherapeuticReasoningKernelTests(unittest.TestCase):
             "what the outcome might seem to prove",
             by_name["avoidance_identity_threat"].discriminating_question,
         )
-        self.assertIn("validate_defuse_act", by_name["avoidance_identity_threat"].recipes)
+        self.assertIn(
+            "validate_defuse_act", by_name["avoidance_identity_threat"].recipes
+        )
         self.assertIn(
             "prototype",
             kernel.states_for_formulation("avoidance_identity_threat"),
@@ -274,7 +278,9 @@ class TherapeuticReasoningKernelTests(unittest.TestCase):
             move.target_formulations,
         )
         self.assertIn("larger self-worth verdict", move.question)
-        self.assertIn("avoidance_identity_threat", {item.pattern for item in move.supported_by})
+        self.assertIn(
+            "avoidance_identity_threat", {item.pattern for item in move.supported_by}
+        )
 
     def test_reasoning_snapshot_includes_differential_formulations(self):
         kernel = TherapeuticReasoningKernel()
@@ -385,7 +391,9 @@ class TherapeuticReasoningKernelTests(unittest.TestCase):
             )
         )
 
-        hypotheses = {(item.source, item.pattern) for item in kernel.hypotheses_for("investor")}
+        hypotheses = {
+            (item.source, item.pattern) for item in kernel.hypotheses_for("investor")
+        }
         self.assertIn(("cbt", "mind_reading"), hypotheses)
         self.assertIn(("focus", "cognitive_belief_work"), hypotheses)
         self.assertIn(("focus", "values_direction"), hypotheses)
@@ -401,7 +409,9 @@ class TherapeuticReasoningKernelTests(unittest.TestCase):
             )
         )
 
-        hypotheses = {(item.source, item.pattern) for item in kernel.hypotheses_for("sad")}
+        hypotheses = {
+            (item.source, item.pattern) for item in kernel.hypotheses_for("sad")
+        }
         self.assertIn(("emotion", "sadness"), hypotheses)
         self.assertIn(("policy", "minimal_disclosure"), hypotheses)
         self.assertNotIn(("act", "values_unclear"), hypotheses)
@@ -421,7 +431,9 @@ class TherapeuticReasoningKernelTests(unittest.TestCase):
             )
         )
 
-        hypotheses = {(item.source, item.pattern) for item in kernel.hypotheses_for("plain")}
+        hypotheses = {
+            (item.source, item.pattern) for item in kernel.hypotheses_for("plain")
+        }
         self.assertNotIn(("act", "values_unclear"), hypotheses)
 
     def test_explicit_value_uncertainty_still_infers_values_clarification(self):
@@ -433,7 +445,9 @@ class TherapeuticReasoningKernelTests(unittest.TestCase):
             )
         )
 
-        hypotheses = {(item.source, item.pattern) for item in kernel.hypotheses_for("aimless")}
+        hypotheses = {
+            (item.source, item.pattern) for item in kernel.hypotheses_for("aimless")
+        }
         self.assertIn(("act", "values_unclear"), hypotheses)
         self.assertIn("values_clarification", kernel.safe_intervention_names("aimless"))
 
@@ -516,10 +530,18 @@ class TherapeuticReasoningKernelTests(unittest.TestCase):
             kernel.safe_states_for_intervention("cognitive_defusion"),
         )
 
-        self.assertIn("moderate-update", kernel.states_for_intervention("rebt_disputation"))
-        self.assertIn("panicked-update", kernel.states_for_intervention("rebt_disputation"))
-        self.assertIn("moderate-update", kernel.safe_states_for_intervention("rebt_disputation"))
-        self.assertNotIn("panicked-update", kernel.safe_states_for_intervention("rebt_disputation"))
+        self.assertIn(
+            "moderate-update", kernel.states_for_intervention("rebt_disputation")
+        )
+        self.assertIn(
+            "panicked-update", kernel.states_for_intervention("rebt_disputation")
+        )
+        self.assertIn(
+            "moderate-update", kernel.safe_states_for_intervention("rebt_disputation")
+        )
+        self.assertNotIn(
+            "panicked-update", kernel.safe_states_for_intervention("rebt_disputation")
+        )
         self.assertIn(
             "panicked-update",
             kernel.contraindicated_states_for_intervention("rebt_disputation"),
@@ -545,7 +567,9 @@ class TherapeuticReasoningKernelTests(unittest.TestCase):
             )
         )
 
-        hypotheses = {(item.source, item.pattern) for item in kernel.hypotheses_for("dbt-case")}
+        hypotheses = {
+            (item.source, item.pattern) for item in kernel.hypotheses_for("dbt-case")
+        }
         ranked = kernel.ranked_interventions("dbt-case")
 
         self.assertIn(("dbt", "emotion_dysregulation"), hypotheses)
@@ -594,8 +618,7 @@ class TherapeuticReasoningKernelTests(unittest.TestCase):
         )
 
         hypotheses = {
-            (item.source, item.pattern)
-            for item in kernel.hypotheses_for("checksum")
+            (item.source, item.pattern) for item in kernel.hypotheses_for("checksum")
         }
         ranked = kernel.ranked_interventions("checksum")
         snapshot = kernel.reasoning_snapshot("checksum")
@@ -603,7 +626,9 @@ class TherapeuticReasoningKernelTests(unittest.TestCase):
         self.assertIn(("consultative", "consultative_facilitation"), hypotheses)
         self.assertIn(("consultative", "concise_factual_answer"), hypotheses)
         self.assertEqual("concise_factual_answer", ranked[0].intervention)
-        self.assertEqual("consultative_facilitation", snapshot["operating_mode"]["mode"])
+        self.assertEqual(
+            "consultative_facilitation", snapshot["operating_mode"]["mode"]
+        )
 
     def test_empath_directed_aggression_ranks_active_listening_repair(self):
         kernel = TherapeuticReasoningKernel()
@@ -615,8 +640,7 @@ class TherapeuticReasoningKernelTests(unittest.TestCase):
         )
 
         hypotheses = {
-            (item.source, item.pattern)
-            for item in kernel.hypotheses_for("repair")
+            (item.source, item.pattern) for item in kernel.hypotheses_for("repair")
         }
         ranked = kernel.ranked_interventions("repair")
 
@@ -640,12 +664,10 @@ class TherapeuticReasoningKernelTests(unittest.TestCase):
         )
 
         hypotheses = {
-            (item.source, item.pattern)
-            for item in kernel.hypotheses_for("stress-body")
+            (item.source, item.pattern) for item in kernel.hypotheses_for("stress-body")
         }
         interventions = {
-            item.intervention
-            for item in kernel.ranked_interventions("stress-body")
+            item.intervention for item in kernel.ranked_interventions("stress-body")
         }
 
         self.assertIn(("mbsr", "stress_load"), hypotheses)
@@ -665,12 +687,10 @@ class TherapeuticReasoningKernelTests(unittest.TestCase):
         )
 
         hypotheses = {
-            (item.source, item.pattern)
-            for item in kernel.hypotheses_for("reactive")
+            (item.source, item.pattern) for item in kernel.hypotheses_for("reactive")
         }
         interventions = {
-            item.intervention
-            for item in kernel.ranked_interventions("reactive")
+            item.intervention for item in kernel.ranked_interventions("reactive")
         }
 
         self.assertIn(("mbsr", "autopilot_reactivity"), hypotheses)
@@ -687,12 +707,18 @@ class TherapeuticReasoningKernelTests(unittest.TestCase):
             )
         )
 
-        hypotheses = {(item.source, item.pattern) for item in kernel.hypotheses_for("crisis")}
-        interventions = {item.intervention for item in kernel.ranked_interventions("crisis")}
+        hypotheses = {
+            (item.source, item.pattern) for item in kernel.hypotheses_for("crisis")
+        }
+        interventions = {
+            item.intervention for item in kernel.ranked_interventions("crisis")
+        }
 
         self.assertIn(("dbt", "crisis_survival"), hypotheses)
         self.assertIn("distress_tolerance_pause", interventions)
-        self.assertEqual("validation", kernel.ranked_interventions("crisis", limit=1)[0].intervention)
+        self.assertEqual(
+            "validation", kernel.ranked_interventions("crisis", limit=1)[0].intervention
+        )
 
     def test_dbt_emotion_regulation_for_flooded_emotion(self):
         kernel = TherapeuticReasoningKernel()
@@ -703,7 +729,9 @@ class TherapeuticReasoningKernelTests(unittest.TestCase):
             )
         )
 
-        hypotheses = {(item.source, item.pattern) for item in kernel.hypotheses_for("flooded")}
+        hypotheses = {
+            (item.source, item.pattern) for item in kernel.hypotheses_for("flooded")
+        }
         ranked = kernel.ranked_interventions("flooded", limit=1)
 
         self.assertIn(("dbt", "emotion_dysregulation"), hypotheses)
@@ -718,8 +746,12 @@ class TherapeuticReasoningKernelTests(unittest.TestCase):
             )
         )
 
-        hypotheses = {(item.source, item.pattern) for item in kernel.hypotheses_for("boundary")}
-        interventions = {item.intervention for item in kernel.ranked_interventions("boundary")}
+        hypotheses = {
+            (item.source, item.pattern) for item in kernel.hypotheses_for("boundary")
+        }
+        interventions = {
+            item.intervention for item in kernel.ranked_interventions("boundary")
+        }
 
         self.assertIn(("dbt", "interpersonal_effectiveness_need"), hypotheses)
         self.assertIn("interpersonal_effectiveness_script", interventions)
@@ -733,8 +765,13 @@ class TherapeuticReasoningKernelTests(unittest.TestCase):
             )
         )
 
-        hypotheses = {(item.source, item.pattern) for item in kernel.hypotheses_for("rumination-dbt")}
-        interventions = {item.intervention for item in kernel.ranked_interventions("rumination-dbt")}
+        hypotheses = {
+            (item.source, item.pattern)
+            for item in kernel.hypotheses_for("rumination-dbt")
+        }
+        interventions = {
+            item.intervention for item in kernel.ranked_interventions("rumination-dbt")
+        }
 
         self.assertIn(("dbt", "mindfulness_need"), hypotheses)
         self.assertIn("mindfulness_observe_describe", interventions)
@@ -749,8 +786,14 @@ class TherapeuticReasoningKernelTests(unittest.TestCase):
             )
         )
 
-        hypotheses = {(item.source, item.pattern) for item in kernel.hypotheses_for("self-invalidating")}
-        interventions = {item.intervention for item in kernel.ranked_interventions("self-invalidating")}
+        hypotheses = {
+            (item.source, item.pattern)
+            for item in kernel.hypotheses_for("self-invalidating")
+        }
+        interventions = {
+            item.intervention
+            for item in kernel.ranked_interventions("self-invalidating")
+        }
 
         self.assertIn(("dbt", "self_invalidation"), hypotheses)
         self.assertIn("self_validation", interventions)
@@ -855,16 +898,20 @@ class TherapeuticReasoningKernelTests(unittest.TestCase):
                     "I keep avoiding the prototype because if it is bad, "
                     "it means I am not cut out for this."
                 ),
-                thoughts=(
-                    "If it is bad, it means I am not cut out for this.",
-                ),
+                thoughts=("If it is bad, it means I am not cut out for this.",),
                 behaviors=("avoidance",),
                 values=("mastery",),
             )
         )
 
-        hypotheses = {(item.source, item.pattern) for item in kernel.hypotheses_for("identity-threat")}
-        ranked = {item.intervention: item for item in kernel.ranked_interventions("identity-threat")}
+        hypotheses = {
+            (item.source, item.pattern)
+            for item in kernel.hypotheses_for("identity-threat")
+        }
+        ranked = {
+            item.intervention: item
+            for item in kernel.ranked_interventions("identity-threat")
+        }
 
         self.assertIn(("loop", "avoidance_identity_threat"), hypotheses)
         self.assertIn("acceptance_committed_action", ranked)
@@ -890,12 +937,20 @@ class TherapeuticReasoningKernelTests(unittest.TestCase):
             )
         )
 
-        sad_hypotheses = {(item.source, item.pattern) for item in kernel.hypotheses_for("minimal-sad")}
-        anxious_hypotheses = {(item.source, item.pattern) for item in kernel.hypotheses_for("minimal-anxious")}
+        sad_hypotheses = {
+            (item.source, item.pattern) for item in kernel.hypotheses_for("minimal-sad")
+        }
+        anxious_hypotheses = {
+            (item.source, item.pattern)
+            for item in kernel.hypotheses_for("minimal-anxious")
+        }
 
         self.assertIn(("loop", "minimal_disclosure_sad_anxious"), sad_hypotheses)
         self.assertIn(("loop", "minimal_disclosure_sad_anxious"), anxious_hypotheses)
-        self.assertEqual("validation", kernel.ranked_interventions("minimal-sad", limit=1)[0].intervention)
+        self.assertEqual(
+            "validation",
+            kernel.ranked_interventions("minimal-sad", limit=1)[0].intervention,
+        )
 
     def test_loop_supports_shame_self_worth_fusion(self):
         kernel = TherapeuticReasoningKernel()
@@ -908,8 +963,12 @@ class TherapeuticReasoningKernelTests(unittest.TestCase):
             )
         )
 
-        hypotheses = {(item.source, item.pattern) for item in kernel.hypotheses_for("shame-worth")}
-        interventions = {item.intervention for item in kernel.ranked_interventions("shame-worth")}
+        hypotheses = {
+            (item.source, item.pattern) for item in kernel.hypotheses_for("shame-worth")
+        }
+        interventions = {
+            item.intervention for item in kernel.ranked_interventions("shame-worth")
+        }
 
         self.assertIn(("loop", "shame_self_worth_fusion"), hypotheses)
         self.assertIn("self_compassion", interventions)
@@ -927,7 +986,10 @@ class TherapeuticReasoningKernelTests(unittest.TestCase):
             )
         )
 
-        hypotheses = {(item.source, item.pattern) for item in kernel.hypotheses_for("valued-procrastination")}
+        hypotheses = {
+            (item.source, item.pattern)
+            for item in kernel.hypotheses_for("valued-procrastination")
+        }
         ranked = kernel.ranked_interventions("valued-procrastination", limit=2)
 
         self.assertIn(("loop", "valued_action_procrastination"), hypotheses)
@@ -947,7 +1009,10 @@ class TherapeuticReasoningKernelTests(unittest.TestCase):
             )
         )
 
-        hypotheses = {(item.source, item.pattern) for item in kernel.hypotheses_for("high-distress-loop")}
+        hypotheses = {
+            (item.source, item.pattern)
+            for item in kernel.hypotheses_for("high-distress-loop")
+        }
         ranked = kernel.ranked_interventions("high-distress-loop", limit=2)
 
         self.assertIn(("loop", "high_distress_gating"), hypotheses)
@@ -970,8 +1035,13 @@ class TherapeuticReasoningKernelTests(unittest.TestCase):
             )
         )
 
-        hypotheses = {(item.source, item.pattern) for item in kernel.hypotheses_for("cbt-enriched")}
-        interventions = {item.intervention for item in kernel.ranked_interventions("cbt-enriched")}
+        hypotheses = {
+            (item.source, item.pattern)
+            for item in kernel.hypotheses_for("cbt-enriched")
+        }
+        interventions = {
+            item.intervention for item in kernel.ranked_interventions("cbt-enriched")
+        }
 
         self.assertIn(("cbt", "discounting_positive"), hypotheses)
         self.assertIn(("cbt", "emotional_reasoning"), hypotheses)
@@ -997,8 +1067,13 @@ class TherapeuticReasoningKernelTests(unittest.TestCase):
             )
         )
 
-        hypotheses = {(item.source, item.pattern) for item in kernel.hypotheses_for("rebt-enriched")}
-        interventions = {item.intervention for item in kernel.ranked_interventions("rebt-enriched")}
+        hypotheses = {
+            (item.source, item.pattern)
+            for item in kernel.hypotheses_for("rebt-enriched")
+        }
+        interventions = {
+            item.intervention for item in kernel.ranked_interventions("rebt-enriched")
+        }
 
         self.assertIn(("rebt", "approval_demandingness"), hypotheses)
         self.assertIn(("rebt", "certainty_demandingness"), hypotheses)
@@ -1022,8 +1097,13 @@ class TherapeuticReasoningKernelTests(unittest.TestCase):
             )
         )
 
-        hypotheses = {(item.source, item.pattern) for item in kernel.hypotheses_for("act-enriched")}
-        interventions = {item.intervention for item in kernel.ranked_interventions("act-enriched")}
+        hypotheses = {
+            (item.source, item.pattern)
+            for item in kernel.hypotheses_for("act-enriched")
+        }
+        interventions = {
+            item.intervention for item in kernel.ranked_interventions("act-enriched")
+        }
 
         self.assertIn(("act", "unworkable_control"), hypotheses)
         self.assertIn(("act", "unwillingness"), hypotheses)
@@ -1045,8 +1125,12 @@ class TherapeuticReasoningKernelTests(unittest.TestCase):
             )
         )
 
-        hypotheses = {(item.source, item.pattern) for item in kernel.hypotheses_for("wise-mind")}
-        interventions = {item.intervention for item in kernel.ranked_interventions("wise-mind")}
+        hypotheses = {
+            (item.source, item.pattern) for item in kernel.hypotheses_for("wise-mind")
+        }
+        interventions = {
+            item.intervention for item in kernel.ranked_interventions("wise-mind")
+        }
 
         self.assertIn(("dbt", "wise_mind_need"), hypotheses)
         self.assertIn(("loop", "certainty_avoidance_loop"), hypotheses)
@@ -1063,8 +1147,12 @@ class TherapeuticReasoningKernelTests(unittest.TestCase):
             )
         )
 
-        hypotheses = {(item.source, item.pattern) for item in kernel.hypotheses_for("vulnerable")}
-        interventions = {item.intervention for item in kernel.ranked_interventions("vulnerable")}
+        hypotheses = {
+            (item.source, item.pattern) for item in kernel.hypotheses_for("vulnerable")
+        }
+        interventions = {
+            item.intervention for item in kernel.ranked_interventions("vulnerable")
+        }
 
         self.assertIn(("dbt", "vulnerability_factors"), hypotheses)
         self.assertIn(("loop", "vulnerability_distress_loop"), hypotheses)
@@ -1083,12 +1171,15 @@ class TherapeuticReasoningKernelTests(unittest.TestCase):
             )
         )
 
-        hypotheses = {(item.source, item.pattern) for item in kernel.hypotheses_for("felt-sense")}
-        interventions = {item.intervention for item in kernel.ranked_interventions("felt-sense")}
+        hypotheses = {
+            (item.source, item.pattern) for item in kernel.hypotheses_for("felt-sense")
+        }
+        interventions = {
+            item.intervention for item in kernel.ranked_interventions("felt-sense")
+        }
         recipes = {item.recipe: item for item in kernel.ranked_recipes("felt-sense")}
         formulations = {
-            item.formulation: item
-            for item in kernel.ranked_formulations("felt-sense")
+            item.formulation: item for item in kernel.ranked_formulations("felt-sense")
         }
 
         self.assertIn(("focusing", "felt_sense_contact"), hypotheses)
@@ -1129,8 +1220,7 @@ class TherapeuticReasoningKernelTests(unittest.TestCase):
             for item in kernel.hypotheses_for("inner-critic")
         }
         interventions = {
-            item.intervention
-            for item in kernel.ranked_interventions("inner-critic")
+            item.intervention for item in kernel.ranked_interventions("inner-critic")
         }
         report = kernel.intervention_requirement_report(
             "inner-critic",

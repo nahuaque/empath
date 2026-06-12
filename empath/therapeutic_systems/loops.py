@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from kanren import conde, eq, facts, lall, var
+from kanren import conde, eq, facts, var
 
 from .base import TherapeuticSystem
 

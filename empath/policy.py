@@ -183,9 +183,7 @@ class PolicyMemory:
         )
         snapshot["candidates"] = adjusted_candidates
         if adjustments:
-            snapshot["policy_adjustments"] = [
-                item.model_dump() for item in adjustments
-            ]
+            snapshot["policy_adjustments"] = [item.model_dump() for item in adjustments]
 
         report = {
             "summary": self.summary(),
@@ -313,7 +311,10 @@ class PolicyMemory:
         for weight, record in _decayed(matching_records):
             record_delta = _outcome_delta(record.outcome)
             if record.friction_before is not None and record.friction_after is not None:
-                record_delta += max(-0.4, min(0.4, (record.friction_before - record.friction_after) / 10))
+                record_delta += max(
+                    -0.4,
+                    min(0.4, (record.friction_before - record.friction_after) / 10),
+                )
             experiment_delta += record_delta * weight
             evidence.append(f"experiment:{record.experiment_id}:{record.outcome}")
         experiment_delta = max(-2.0, min(2.0, experiment_delta))
@@ -359,13 +360,9 @@ class PolicyMemory:
             count = len(records)
             focus_text = f" around {latest.focus}" if latest.focus else ""
             if positive:
-                description = (
-                    f"{count} positive outcome{'s' if count != 1 else ''}{focus_text}; latest was {latest.outcome}."
-                )
+                description = f"{count} positive outcome{'s' if count != 1 else ''}{focus_text}; latest was {latest.outcome}."
             else:
-                description = (
-                    f"{count} costly outcome{'s' if count != 1 else ''}{focus_text}; latest was {latest.outcome}."
-                )
+                description = f"{count} costly outcome{'s' if count != 1 else ''}{focus_text}; latest was {latest.outcome}."
             items.append(
                 {
                     "intervention": intervention,
@@ -432,7 +429,9 @@ def _formulation_reason(record: PolicyFormulationRecord) -> str:
     return f"The user {action} the working-map item {_human_label(record.label)}."
 
 
-def _decayed(records: list[PolicyExperimentRecord]) -> tuple[tuple[float, PolicyExperimentRecord], ...]:
+def _decayed(
+    records: list[PolicyExperimentRecord],
+) -> tuple[tuple[float, PolicyExperimentRecord], ...]:
     size = len(records)
     weighted = []
     for index, record in enumerate(records):

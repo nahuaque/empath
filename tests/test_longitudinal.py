@@ -30,9 +30,7 @@ class LongitudinalPatternTests(unittest.TestCase):
                     "behaviors": ("procrastination",),
                 },
                 kernel_snapshot={
-                    "hypotheses": (
-                        {"source": "focus", "pattern": "avoidance_escape"},
-                    )
+                    "hypotheses": ({"source": "focus", "pattern": "avoidance_escape"},)
                 },
                 response_plan={"intervention": "committed_action"},
             ),

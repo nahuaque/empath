@@ -70,7 +70,9 @@ class ChatRequest(BaseModel):
 
     message: str = Field(min_length=1, max_length=6000)
     user_id: str = Field(default=DEFAULT_USER_ID, min_length=1, max_length=128)
-    workspace_id: str = Field(default=DEFAULT_WORKSPACE_ID, min_length=1, max_length=128)
+    workspace_id: str = Field(
+        default=DEFAULT_WORKSPACE_ID, min_length=1, max_length=128
+    )
     conversation_id: str | None = Field(default=None, min_length=1, max_length=128)
     session_id: str | None = Field(default=None, min_length=1, max_length=128)
     trace: bool = False
@@ -82,7 +84,9 @@ class ChatRetryRequest(BaseModel):
     message_index: int = Field(ge=1)
     message: str | None = Field(default=None, min_length=1, max_length=6000)
     user_id: str = Field(default=DEFAULT_USER_ID, min_length=1, max_length=128)
-    workspace_id: str = Field(default=DEFAULT_WORKSPACE_ID, min_length=1, max_length=128)
+    workspace_id: str = Field(
+        default=DEFAULT_WORKSPACE_ID, min_length=1, max_length=128
+    )
     conversation_id: str | None = Field(default=None, min_length=1, max_length=128)
     session_id: str | None = Field(default=None, min_length=1, max_length=128)
     trace: bool = False
@@ -117,7 +121,9 @@ class ConversationCreateRequest(BaseModel):
     """Create a conversation inside a workspace."""
 
     user_id: str = Field(default=DEFAULT_USER_ID, min_length=1, max_length=128)
-    workspace_id: str = Field(default=DEFAULT_WORKSPACE_ID, min_length=1, max_length=128)
+    workspace_id: str = Field(
+        default=DEFAULT_WORKSPACE_ID, min_length=1, max_length=128
+    )
     conversation_id: str | None = Field(default=None, min_length=1, max_length=128)
     session_id: str | None = Field(default=None, min_length=1, max_length=128)
     title: str | None = Field(default=None, max_length=128)
@@ -127,7 +133,9 @@ class ConversationRenameRequest(BaseModel):
     """Rename a conversation display title."""
 
     user_id: str = Field(default=DEFAULT_USER_ID, min_length=1, max_length=128)
-    workspace_id: str = Field(default=DEFAULT_WORKSPACE_ID, min_length=1, max_length=128)
+    workspace_id: str = Field(
+        default=DEFAULT_WORKSPACE_ID, min_length=1, max_length=128
+    )
     conversation_id: str = Field(min_length=1, max_length=128)
     session_id: str | None = Field(default=None, min_length=1, max_length=128)
     title: str = Field(min_length=1, max_length=128)
@@ -137,7 +145,9 @@ class ConversationDeleteRequest(BaseModel):
     """Delete a conversation and choose the next active conversation."""
 
     user_id: str = Field(default=DEFAULT_USER_ID, min_length=1, max_length=128)
-    workspace_id: str = Field(default=DEFAULT_WORKSPACE_ID, min_length=1, max_length=128)
+    workspace_id: str = Field(
+        default=DEFAULT_WORKSPACE_ID, min_length=1, max_length=128
+    )
     conversation_id: str = Field(min_length=1, max_length=128)
     session_id: str | None = Field(default=None, min_length=1, max_length=128)
 
@@ -228,7 +238,9 @@ class FormulationFeedbackRequest(BaseModel):
 
     session_id: str | None = Field(default=None, min_length=1, max_length=128)
     user_id: str = Field(default=DEFAULT_USER_ID, min_length=1, max_length=128)
-    workspace_id: str = Field(default=DEFAULT_WORKSPACE_ID, min_length=1, max_length=128)
+    workspace_id: str = Field(
+        default=DEFAULT_WORKSPACE_ID, min_length=1, max_length=128
+    )
     conversation_id: str | None = Field(default=None, min_length=1, max_length=128)
     node_id: str = Field(min_length=1, max_length=128)
     action: FeedbackAction
@@ -251,7 +263,9 @@ class FormulationClearRequest(BaseModel):
 
     session_id: str | None = Field(default=None, min_length=1, max_length=128)
     user_id: str = Field(default=DEFAULT_USER_ID, min_length=1, max_length=128)
-    workspace_id: str = Field(default=DEFAULT_WORKSPACE_ID, min_length=1, max_length=128)
+    workspace_id: str = Field(
+        default=DEFAULT_WORKSPACE_ID, min_length=1, max_length=128
+    )
     conversation_id: str | None = Field(default=None, min_length=1, max_length=128)
 
 
@@ -282,7 +296,9 @@ class ExperimentFeedbackRequest(BaseModel):
 
     session_id: str | None = Field(default=None, min_length=1, max_length=128)
     user_id: str = Field(default=DEFAULT_USER_ID, min_length=1, max_length=128)
-    workspace_id: str = Field(default=DEFAULT_WORKSPACE_ID, min_length=1, max_length=128)
+    workspace_id: str = Field(
+        default=DEFAULT_WORKSPACE_ID, min_length=1, max_length=128
+    )
     conversation_id: str | None = Field(default=None, min_length=1, max_length=128)
     experiment_id: str = Field(min_length=1, max_length=128)
     action: ExperimentFeedbackAction
@@ -454,17 +470,15 @@ class ChatSessionStore:
                 )
                 latest_existing = _latest_conversation_id(workspace)
                 current = workspace.conversations.get(resolved_conversation_id)
-                if (
-                    resolved_conversation_id
-                    and current is None
-                    and latest_non_empty
-                ):
+                if resolved_conversation_id and current is None and latest_non_empty:
                     resolved_conversation_id = latest_non_empty
                 elif resolved_conversation_id and current is None and latest_existing:
                     resolved_conversation_id = latest_existing
                 elif resolved_conversation_id and current is None:
                     resolved_conversation_id = ""
-                elif current is not None and not current.transcript and latest_non_empty:
+                elif (
+                    current is not None and not current.transcript and latest_non_empty
+                ):
                     resolved_conversation_id = latest_non_empty
             if not resolved_conversation_id:
                 resolved_conversation_id = (
@@ -606,7 +620,9 @@ class ChatSessionStore:
                 workspace.conversations,
             )
             if resolved_conversation_id in workspace.conversations:
-                raise ScopeMutationError("Conversation already exists.", status_code=409)
+                raise ScopeMutationError(
+                    "Conversation already exists.", status_code=409
+                )
             conversation = self._create_conversation_locked(
                 workspace,
                 conversation_id=resolved_conversation_id,
@@ -809,7 +825,9 @@ class ChatSessionStore:
             return
         self._users = self._restore_users(data)
 
-    def _restore_users(self, data: dict[str, Any]) -> dict[str, dict[str, ChatWorkspace]]:
+    def _restore_users(
+        self, data: dict[str, Any]
+    ) -> dict[str, dict[str, ChatWorkspace]]:
         users = data.get("users")
         if not isinstance(users, dict):
             return {}
@@ -839,8 +857,8 @@ class ChatSessionStore:
             for conversation_id, conversation_data in conversations.items():
                 if not isinstance(conversation_data, dict):
                     continue
-                workspace.conversations[str(conversation_id)] = self._restore_conversation(
-                    conversation_data
+                workspace.conversations[str(conversation_id)] = (
+                    self._restore_conversation(conversation_data)
                 )
         return workspace
 
@@ -904,12 +922,10 @@ class ChatSessionStore:
             "created_order": conversation.created_order,
             "updated_order": conversation.updated_order,
             "transcript": [
-                item.model_dump(exclude_none=True)
-                for item in conversation.transcript
+                item.model_dump(exclude_none=True) for item in conversation.transcript
             ],
             "turn_traces": {
-                str(index): trace
-                for index, trace in conversation.turn_traces.items()
+                str(index): trace for index, trace in conversation.turn_traces.items()
             },
             "explanations": {
                 str(index): explanation
@@ -930,11 +946,15 @@ def _state_backend_from_config(
     surreal_password: str | None,
 ) -> StateBackend | None:
     backend = (
-        store_backend
-        or os.environ.get("EMPATH_STORE_BACKEND")
-        or os.environ.get("COACH_STORE_BACKEND")
-        or ("json" if state_file else "surreal")
-    ).strip().casefold()
+        (
+            store_backend
+            or os.environ.get("EMPATH_STORE_BACKEND")
+            or os.environ.get("COACH_STORE_BACKEND")
+            or ("json" if state_file else "surreal")
+        )
+        .strip()
+        .casefold()
+    )
     if backend == "memory":
         return None
     if backend == "json":
@@ -1070,7 +1090,9 @@ def create_app(
             )
         if route.mode == "reflective_listening":
             try:
-                message = await _run_reflection_turn(scope, payload.message, route=route)
+                message = await _run_reflection_turn(
+                    scope, payload.message, route=route
+                )
             except Exception as exc:  # pragma: no cover - integration/runtime boundary
                 return JSONResponse({"detail": str(exc)}, status_code=500)
             await store.save()
@@ -1224,12 +1246,10 @@ def create_app(
                     "workspace_id": scope.workspace_id,
                     "conversation_id": scope.conversation_id,
                     "workspaces": [
-                        item.model_dump()
-                        for item in _workspace_summaries(scope)
+                        item.model_dump() for item in _workspace_summaries(scope)
                     ],
                     "conversations": [
-                        item.model_dump()
-                        for item in _conversation_summaries(scope)
+                        item.model_dump() for item in _conversation_summaries(scope)
                     ],
                 }
             )
@@ -1320,7 +1340,9 @@ def create_app(
                     payload.action,
                 )
             except KeyError:
-                return JSONResponse({"detail": "Formulation node not found."}, status_code=404)
+                return JSONResponse(
+                    {"detail": "Formulation node not found."}, status_code=404
+                )
         await store.save()
         return JSONResponse(
             FormulationFeedbackResponse(
@@ -1450,7 +1472,9 @@ def create_app(
                     result.experiment,
                 )
             except KeyError:
-                return JSONResponse({"detail": "Experiment not found."}, status_code=404)
+                return JSONResponse(
+                    {"detail": "Experiment not found."}, status_code=404
+                )
         await store.save()
         return JSONResponse(
             ExperimentFeedbackResponse(
@@ -1481,12 +1505,16 @@ def create_app(
                 return JSONResponse({"detail": "Message not found."}, status_code=404)
             if message.role != "assistant":
                 return JSONResponse(
-                    {"detail": "Trace explanations are available for assistant messages."},
+                    {
+                        "detail": "Trace explanations are available for assistant messages."
+                    },
                     status_code=422,
                 )
             trace = scope.conversation.turn_traces.get(message_index)
             if trace is None:
-                return JSONResponse({"detail": "No trace stored for this message."}, status_code=404)
+                return JSONResponse(
+                    {"detail": "No trace stored for this message."}, status_code=404
+                )
             explanation = scope.conversation.explanations.get(message_index)
             if explanation is None:
                 evidence = await store.explanation_evidence(
@@ -1513,7 +1541,9 @@ def create_app(
     async def chat_stream(request: Request) -> Response:
         message = (request.query_params.get("message") or "").strip()
         if not message:
-            return JSONResponse({"detail": "Missing message query parameter."}, status_code=400)
+            return JSONResponse(
+                {"detail": "Missing message query parameter."}, status_code=400
+            )
         if len(message) > 6000:
             return JSONResponse({"detail": "Message is too long."}, status_code=422)
 
@@ -1534,15 +1564,16 @@ def create_app(
                     "workspace_id": scope.workspace_id,
                     "conversation_id": scope.conversation_id,
                     "workspaces": [
-                        item.model_dump()
-                        for item in _workspace_summaries(scope)
+                        item.model_dump() for item in _workspace_summaries(scope)
                     ],
                 },
             )
             yield _sse("mode", route.model_dump())
             async with scope.workspace.lock:  # type: ignore[arg-type]
                 try:
-                    user_record = _append_transcript_message(scope.conversation, "user", message)
+                    user_record = _append_transcript_message(
+                        scope.conversation, "user", message
+                    )
                     _touch_conversation(scope)
                     yield _sse("message", user_record.model_dump(exclude_none=True))
                     if route.mode == "framework_note":
@@ -1594,7 +1625,9 @@ def create_app(
                             "response",
                             {
                                 "text": reflection_record.text,
-                                "message": reflection_record.model_dump(exclude_none=True),
+                                "message": reflection_record.model_dump(
+                                    exclude_none=True
+                                ),
                                 "policy": scope.workspace.policy.summary(),
                                 "workspaces": [
                                     item.model_dump()
@@ -1661,7 +1694,9 @@ def create_app(
                     scope.conversation.history = None
                     trace = build_turn_trace(turn)
                     trace["scope"] = _trace_scope(scope)
-                    final_route = route_for_response_plan(turn.prepared.route, turn.response_plan)
+                    final_route = route_for_response_plan(
+                        turn.prepared.route, turn.response_plan
+                    )
                     trace["route"] = final_route.model_dump()
                     counterfactuals = (
                         None
@@ -1691,22 +1726,24 @@ def create_app(
                             formulation_delta.model_dump(exclude_none=True),
                         )
                     if experiment is not None:
-                        yield _sse("experiment", experiment.model_dump(exclude_none=True))
+                        yield _sse(
+                            "experiment", experiment.model_dump(exclude_none=True)
+                        )
                     response_data = {
                         "text": turn.text,
                         "message": assistant_record.model_dump(exclude_none=True),
                         "policy": scope.workspace.policy.summary(),
                         "workspaces": [
-                            item.model_dump()
-                            for item in _workspace_summaries(scope)
+                            item.model_dump() for item in _workspace_summaries(scope)
                         ],
                         "conversations": [
-                            item.model_dump()
-                            for item in _conversation_summaries(scope)
+                            item.model_dump() for item in _conversation_summaries(scope)
                         ],
                     }
                     if experiment is not None:
-                        response_data["experiment"] = experiment.model_dump(exclude_none=True)
+                        response_data["experiment"] = experiment.model_dump(
+                            exclude_none=True
+                        )
                     yield _sse(
                         "response",
                         response_data,
@@ -1715,13 +1752,15 @@ def create_app(
                         yield _sse("trace", trace)
                     yield _sse(
                         "done",
-                            {
-                                "ok": True,
-                                "message_count": len(scope.conversation.transcript),
-                            },
-                        )
+                        {
+                            "ok": True,
+                            "message_count": len(scope.conversation.transcript),
+                        },
+                    )
                     await store.save()
-                except Exception as exc:  # pragma: no cover - integration/runtime boundary
+                except (
+                    Exception
+                ) as exc:  # pragma: no cover - integration/runtime boundary
                     await store.save()
                     yield _sse("error", {"detail": str(exc)})
                     yield _sse("done", {"ok": False})
@@ -1749,7 +1788,9 @@ def create_app(
             Route("/api/chat/retry", chat_retry_json, methods=["POST"]),
             Route("/api/chat/stream", chat_stream, methods=["GET"]),
             Route("/api/formulation", formulation, methods=["GET"]),
-            Route("/api/formulation/compaction", formulation_compaction, methods=["GET"]),
+            Route(
+                "/api/formulation/compaction", formulation_compaction, methods=["GET"]
+            ),
             Route("/api/formulation/mirror", formulation_mirror, methods=["GET"]),
             Route("/api/formulation/feedback", formulation_feedback, methods=["POST"]),
             Route("/api/formulation/clear", formulation_clear, methods=["POST"]),
@@ -1892,7 +1933,10 @@ async def _retry_latest_user_turn(
     message_index: int,
     message: str | None,
     store: ChatSessionStore,
-) -> tuple[ChatTurnResult, FormulationDelta | None, CoachingExperiment | None] | ChatMessage:
+) -> (
+    tuple[ChatTurnResult, FormulationDelta | None, CoachingExperiment | None]
+    | ChatMessage
+):
     async with scope.workspace.lock:  # type: ignore[arg-type]
         latest_user = _latest_user_message(scope.conversation)
         if latest_user is None:
@@ -2066,10 +2110,9 @@ def _apply_policy_to_prepared(
         prepared.kernel_snapshot
     )
     adjusted_snapshot = with_intervention_deliberation(adjusted_snapshot)
-    has_policy_report = (
-        bool(policy_report.get("adjustments"))
-        or not policy_report.get("summary", {}).get("empty", True)
-    )
+    has_policy_report = bool(policy_report.get("adjustments")) or not policy_report.get(
+        "summary", {}
+    ).get("empty", True)
     return PreparedTurn(
         route=prepared.route,
         extraction=prepared.extraction,
@@ -2145,7 +2188,9 @@ def _trace_counterfactuals(
     return tuple(items) or None
 
 
-def _transcript_message(conversation: ChatConversation, message_index: int) -> ChatMessage | None:
+def _transcript_message(
+    conversation: ChatConversation, message_index: int
+) -> ChatMessage | None:
     for message in conversation.transcript:
         if message.index == message_index:
             return message
@@ -2161,9 +2206,7 @@ def _latest_user_message(conversation: ChatConversation) -> ChatMessage | None:
 
 def _truncate_after_message(conversation: ChatConversation, message_index: int) -> None:
     conversation.transcript = [
-        message
-        for message in conversation.transcript
-        if message.index <= message_index
+        message for message in conversation.transcript if message.index <= message_index
     ]
     conversation.turn_traces = {
         index: trace
@@ -2204,7 +2247,9 @@ def _rebuild_workspace_derived_state(workspace: ChatWorkspace) -> None:
                             message_index=message.index,
                         )
                 if message.experiment is not None:
-                    experiment_rows.append(message.experiment.model_dump(exclude_none=True))
+                    experiment_rows.append(
+                        message.experiment.model_dump(exclude_none=True)
+                    )
 
     experiments = ExperimentStore()
     experiments.import_state(experiment_rows)
@@ -2325,7 +2370,9 @@ def _workspace_summary(
         workspace_id=workspace_id,
         title=workspace.title or _workspace_title(workspace_id),
         conversation_count=len(conversations),
-        message_count=sum(len(conversation.transcript) for conversation in conversations),
+        message_count=sum(
+            len(conversation.transcript) for conversation in conversations
+        ),
         active=active,
     )
 
@@ -2459,13 +2506,21 @@ def _fallback_compaction_summary(scope: WorkspaceScope) -> dict[str, Any]:
         "active_node_count": len(active_nodes),
         "hidden_node_count": len(hidden_nodes),
         "archived_node_count": graph.archived_node_count,
-        "rejected_node_count": sum(1 for node in graph.nodes if node.status == "rejected"),
-        "removed_node_count": sum(1 for node in graph.nodes if node.status == "removed"),
+        "rejected_node_count": sum(
+            1 for node in graph.nodes if node.status == "rejected"
+        ),
+        "removed_node_count": sum(
+            1 for node in graph.nodes if node.status == "removed"
+        ),
         "active_edge_count": sum(
-            1 for edge in graph.edges if edge.status not in {"archived", "rejected", "removed"}
+            1
+            for edge in graph.edges
+            if edge.status not in {"archived", "rejected", "removed"}
         ),
         "hidden_edge_count": sum(
-            1 for edge in graph.edges if edge.status in {"archived", "rejected", "removed"}
+            1
+            for edge in graph.edges
+            if edge.status in {"archived", "rejected", "removed"}
         ),
         "active_examples": [
             {
@@ -2501,11 +2556,7 @@ def _fallback_memory_packet(
     )
     query_terms = _memory_query_terms(extraction, kernel_snapshot)
     ranked_nodes = sorted(
-        (
-            node
-            for node in graph.nodes
-            if node.status not in {"removed"}
-        ),
+        (node for node in graph.nodes if node.status not in {"removed"}),
         key=lambda node: (
             -_memory_node_score(node.label, node.kind, query_terms, node.status),
             node.kind,
@@ -2523,9 +2574,7 @@ def _fallback_memory_packet(
         if node.status in {"rejected", "removed"}
     ][:6]
     archived = [
-        _memory_node_record(node)
-        for node in ranked_nodes
-        if node.status == "archived"
+        _memory_node_record(node) for node in ranked_nodes if node.status == "archived"
     ][:4]
     open_objectives = [
         _memory_node_record(node)
@@ -2609,7 +2658,7 @@ def _memory_query_terms(
     kernel_snapshot: dict[str, Any],
 ) -> set[str]:
     terms: set[str] = set()
-    for field in (
+    for extraction_field in (
         "situations",
         "thoughts",
         "beliefs",
@@ -2627,7 +2676,7 @@ def _memory_query_terms(
         "stakes",
         "domains",
     ):
-        for value in extraction.get(field) or ():
+        for value in extraction.get(extraction_field) or ():
             terms.update(_tokenize_memory_text(value))
     for hypothesis in kernel_snapshot.get("hypotheses") or ():
         if isinstance(hypothesis, dict):
@@ -2693,7 +2742,9 @@ def _format_memory_packet_context(packet: dict[str, Any]) -> str:
             if reason := item.get("retention_action"):
                 suffix += f" ({reason})"
             lines.append(f"- {_compact_preview(str(label), limit=130)}{suffix}")
-    lines.append("Use this memory lightly; ask or invite correction if continuity is uncertain.")
+    lines.append(
+        "Use this memory lightly; ask or invite correction if continuity is uncertain."
+    )
     return "\n".join(lines)
 
 
@@ -2756,9 +2807,7 @@ def _format_graph_evidence(evidence: dict[str, Any] | None) -> list[str]:
     ]
 
     messages = [
-        item
-        for item in evidence.get("messages") or ()
-        if isinstance(item, dict)
+        item for item in evidence.get("messages") or () if isinstance(item, dict)
     ]
     if messages:
         lines.append("Relevant transcript records:")
@@ -2778,29 +2827,31 @@ def _format_graph_evidence(evidence: dict[str, Any] | None) -> list[str]:
         labels = []
         for item in nodes[:8]:
             kind = _human_label(str(item.get("kind") or "node"))
-            label = _human_label(str(item.get("label") or item.get("node_id") or "item"))
+            label = _human_label(
+                str(item.get("label") or item.get("node_id") or "item")
+            )
             seen = item.get("seen_count")
             seen_text = f", seen {seen}x" if seen else ""
             labels.append(f"{label} ({kind}{seen_text})")
         lines.append("Working-map support: " + "; ".join(labels) + ".")
 
     edges = [
-        item
-        for item in evidence.get("support_edges") or ()
-        if isinstance(item, dict)
+        item for item in evidence.get("support_edges") or () if isinstance(item, dict)
     ]
     if edges:
         lines.append("Support paths in the map:")
         for item in edges[:5]:
-            source = _human_label(str(item.get("source_label") or item.get("source_node_id") or "source"))
-            target = _human_label(str(item.get("target_label") or item.get("target_node_id") or "target"))
+            source = _human_label(
+                str(item.get("source_label") or item.get("source_node_id") or "source")
+            )
+            target = _human_label(
+                str(item.get("target_label") or item.get("target_node_id") or "target")
+            )
             kind = _human_label(str(item.get("kind") or "supports"))
             lines.append(f"- {source} -> {kind} -> {target}")
 
     provenance = [
-        item
-        for item in evidence.get("provenance") or ()
-        if isinstance(item, dict)
+        item for item in evidence.get("provenance") or () if isinstance(item, dict)
     ]
     if provenance:
         examples = []
@@ -2813,9 +2864,7 @@ def _format_graph_evidence(evidence: dict[str, Any] | None) -> list[str]:
             lines.append("Provenance examples: " + "; ".join(examples) + ".")
 
     experiments = [
-        item
-        for item in evidence.get("experiments") or ()
-        if isinstance(item, dict)
+        item for item in evidence.get("experiments") or () if isinstance(item, dict)
     ]
     if experiments:
         experiment = experiments[0]
@@ -2847,11 +2896,7 @@ def _format_memory_used(memory: Any) -> list[str]:
         ("archived_relevant", "Archived but relevant"),
     )
     for key, title in sections:
-        items = [
-            item
-            for item in memory.get(key) or ()
-            if isinstance(item, dict)
-        ]
+        items = [item for item in memory.get(key) or () if isinstance(item, dict)]
         if not items:
             continue
         labels = []
@@ -2867,16 +2912,12 @@ def _format_memory_used(memory: Any) -> list[str]:
                 continue
             kind = item.get("kind") or item.get("intervention") or item.get("role")
             kind_text = f" ({_human_label(str(kind))})" if kind else ""
-            labels.append(
-                f"{_compact_preview(str(label), limit=110)}{kind_text}"
-            )
+            labels.append(f"{_compact_preview(str(label), limit=110)}{kind_text}")
         if labels:
             lines.append(f"{title}: " + "; ".join(labels) + ".")
 
     edges = [
-        item
-        for item in memory.get("supporting_edges") or ()
-        if isinstance(item, dict)
+        item for item in memory.get("supporting_edges") or () if isinstance(item, dict)
     ]
     if edges:
         lines.append("Memory support paths:")
@@ -2922,7 +2963,11 @@ def _core_explanation_context(
     possible_patterns = (
         _clean_label_list(backward.get("possible_patterns"))
         if backward
-        else list(TherapeuticReasoningKernel().patterns_for_intervention(selected_intervention))
+        else list(
+            TherapeuticReasoningKernel().patterns_for_intervention(
+                selected_intervention
+            )
+        )
     )
     possible_set = set(possible_patterns)
     primary_hypotheses = [
@@ -2931,9 +2976,7 @@ def _core_explanation_context(
         if not possible_set or str(item.get("pattern")) in possible_set
     ] or candidate_hypotheses
     core_patterns = _unique_labels(
-        str(item.get("pattern"))
-        for item in primary_hypotheses
-        if item.get("pattern")
+        str(item.get("pattern")) for item in primary_hypotheses if item.get("pattern")
     )
     if not core_patterns and backward:
         core_patterns = _clean_label_list(backward.get("satisfied_patterns"))
@@ -3017,7 +3060,8 @@ def _format_core_graph_evidence(
     if messages:
         item = next(
             (
-                message for message in reversed(messages)
+                message
+                for message in reversed(messages)
                 if str(message.get("role") or "") == "user"
             ),
             messages[-1],
@@ -3037,7 +3081,9 @@ def _format_core_graph_evidence(
         rendered = []
         for item in nodes[:3]:
             kind = _human_label(str(item.get("kind") or "node"))
-            label = _human_label(str(item.get("label") or item.get("node_id") or "item"))
+            label = _human_label(
+                str(item.get("label") or item.get("node_id") or "item")
+            )
             rendered.append(f"{label} ({kind})")
         lines.append("Working-map support: " + "; ".join(rendered) + ".")
 
@@ -3049,8 +3095,12 @@ def _format_core_graph_evidence(
     )
     if edges:
         item = edges[0]
-        source = _human_label(str(item.get("source_label") or item.get("source_node_id") or "source"))
-        target = _human_label(str(item.get("target_label") or item.get("target_node_id") or "target"))
+        source = _human_label(
+            str(item.get("source_label") or item.get("source_node_id") or "source")
+        )
+        target = _human_label(
+            str(item.get("target_label") or item.get("target_node_id") or "target")
+        )
         kind = _human_label(str(item.get("kind") or "supports"))
         lines.append(f"Support path: {source} -> {kind} -> {target}.")
 
@@ -3071,7 +3121,12 @@ def _format_core_memory_used(
         lines.append(f"Memory source: {_human_label(source).capitalize()}.")
 
     selected_items = []
-    for key in ("recent_patterns", "open_objectives", "active_focus", "prior_experiments"):
+    for key in (
+        "recent_patterns",
+        "open_objectives",
+        "active_focus",
+        "prior_experiments",
+    ):
         selected_items.extend(
             (key, item)
             for item in _core_matching_items(
@@ -3107,10 +3162,7 @@ def _selected_deliberation_item(
     selected_intervention: str,
 ) -> dict[str, Any] | None:
     for item in deliberation.get("candidates_considered") or ():
-        if (
-            isinstance(item, dict)
-            and item.get("intervention") == selected_intervention
-        ):
+        if isinstance(item, dict) and item.get("intervention") == selected_intervention:
             return item
     return None
 
@@ -3217,14 +3269,15 @@ def explain_trace_human_readable(
         )
         source_text = f" ({', '.join(sources)})" if sources else ""
         lines.append(
-            "Core tentative hypotheses"
-            f"{source_text}: {_format_labels(core_patterns)}."
+            f"Core tentative hypotheses{source_text}: {_format_labels(core_patterns)}."
         )
 
     if backward:
         possible_patterns = _clean_label_list(backward.get("possible_patterns"))
         coherent_scope = [
-            pattern for pattern in possible_patterns if not core_patterns or pattern in core_patterns
+            pattern
+            for pattern in possible_patterns
+            if not core_patterns or pattern in core_patterns
         ] or possible_patterns[:2]
         if coherent_scope:
             lines.append(
@@ -3256,8 +3309,12 @@ def explain_trace_human_readable(
 
     core_formulation = _best_core_formulation(formulations, core_patterns)
     if core_formulation:
-        label = _human_label(str(core_formulation.get("label") or core_formulation.get("formulation")))
-        summary = _compact_preview(str(core_formulation.get("summary") or ""), limit=150)
+        label = _human_label(
+            str(core_formulation.get("label") or core_formulation.get("formulation"))
+        )
+        summary = _compact_preview(
+            str(core_formulation.get("summary") or ""), limit=150
+        )
         if summary:
             lines.append(f"Relevant differential formulation: {label}: {summary}")
         else:
@@ -3286,7 +3343,9 @@ def explain_trace_human_readable(
     if evidence_lines := _format_core_graph_evidence(evidence, label_terms=label_terms):
         lines.extend(evidence_lines)
 
-    if memory_lines := _format_core_memory_used(trace.get("memory"), label_terms=label_terms):
+    if memory_lines := _format_core_memory_used(
+        trace.get("memory"), label_terms=label_terms
+    ):
         lines.extend(memory_lines)
 
     policy = trace.get("policy") or {}
@@ -3294,7 +3353,8 @@ def explain_trace_human_readable(
         adjustments = policy.get("adjustments") or []
         selected_adjustment = next(
             (
-                item for item in adjustments
+                item
+                for item in adjustments
                 if item.get("intervention") == selected_intervention
             ),
             None,
@@ -3316,7 +3376,9 @@ def explain_trace_human_readable(
         lines.append(f"The concrete exercise came from that intervention: {exercise}")
 
     if question := selection.get("question"):
-        lines.append(f"The follow-up question was meant to keep the next step small: {question}")
+        lines.append(
+            f"The follow-up question was meant to keep the next step small: {question}"
+        )
 
     contraindications = [
         str(reason)
@@ -3386,8 +3448,7 @@ def _format_backward_justification(report: dict[str, Any]) -> list[str]:
     satisfied_patterns = _clean_label_list(report.get("satisfied_patterns"))
     if satisfied_patterns:
         lines.append(
-            "In this turn, the matched path was "
-            f"{_format_labels(satisfied_patterns)}."
+            f"In this turn, the matched path was {_format_labels(satisfied_patterns)}."
         )
     else:
         lines.append(
@@ -3502,9 +3563,17 @@ def _requested_frameworks(message: str) -> tuple[str, ...]:
         requested.append("act")
     if re.search(r"\b(REBT)\b", text) or "rational emotive" in lowered:
         requested.append("rebt")
-    if re.search(r"\b(DBT)\b", text) or "dialectical behavior" in lowered or "dialectical behavioural" in lowered:
+    if (
+        re.search(r"\b(DBT)\b", text)
+        or "dialectical behavior" in lowered
+        or "dialectical behavioural" in lowered
+    ):
         requested.append("dbt")
-    if re.search(r"\b(MBSR)\b", text) or "mindfulness-based stress reduction" in lowered or "mindfulness based stress reduction" in lowered:
+    if (
+        re.search(r"\b(MBSR)\b", text)
+        or "mindfulness-based stress reduction" in lowered
+        or "mindfulness based stress reduction" in lowered
+    ):
         requested.append("mbsr")
     if "focusing" in lowered:
         requested.append("focusing")

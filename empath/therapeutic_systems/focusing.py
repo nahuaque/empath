@@ -96,7 +96,10 @@ class FocusingSystem(TherapeuticSystem):
                 score += 1.25
         if "symbolization_needed" in patterns and intervention == "resonant_word_check":
             score += 1.5
-        if "inner_critic_presence" in patterns and intervention == "inner_critic_distance":
+        if (
+            "inner_critic_presence" in patterns
+            and intervention == "inner_critic_distance"
+        ):
             score += 1.5
         if "felt_shift_possible" in patterns and intervention == "felt_shift_tracking":
             score += 1.5
@@ -122,8 +125,14 @@ class FocusingSystem(TherapeuticSystem):
         belief = var()
         return conde(
             [kernel.state_feature(state, "symbolization_needed")],
-            [kernel.has_thought(state, thought), kernel.thought_feature(thought, "symbolization_need")],
-            [kernel.has_belief(state, belief), kernel.belief_feature(belief, "symbolization_need")],
+            [
+                kernel.has_thought(state, thought),
+                kernel.thought_feature(thought, "symbolization_need"),
+            ],
+            [
+                kernel.has_belief(state, belief),
+                kernel.belief_feature(belief, "symbolization_need"),
+            ],
         )
 
     def _inner_critic_presenceo(self, kernel: Any, state: Any):
@@ -131,6 +140,12 @@ class FocusingSystem(TherapeuticSystem):
         belief = var()
         return conde(
             [kernel.state_feature(state, "inner_critic")],
-            [kernel.has_thought(state, thought), kernel.thought_feature(thought, "inner_critic_claim")],
-            [kernel.has_belief(state, belief), kernel.belief_feature(belief, "inner_critic_claim")],
+            [
+                kernel.has_thought(state, thought),
+                kernel.thought_feature(thought, "inner_critic_claim"),
+            ],
+            [
+                kernel.has_belief(state, belief),
+                kernel.belief_feature(belief, "inner_critic_claim"),
+            ],
         )

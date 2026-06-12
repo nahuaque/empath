@@ -33,7 +33,9 @@ class PolicyMemoryTests(unittest.TestCase):
             }
         )
 
-        self.assertEqual("cognitive_defusion", snapshot["candidates"][0]["intervention"])
+        self.assertEqual(
+            "cognitive_defusion", snapshot["candidates"][0]["intervention"]
+        )
         self.assertGreater(snapshot["candidates"][0]["score"], 4.0)
         self.assertIn("Prior feedback", snapshot["candidates"][0]["policy_reasons"][0])
         self.assertEqual("cognitive_defusion", report["adjustments"][0]["intervention"])

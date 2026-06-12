@@ -48,7 +48,9 @@ class CaseMemoryTests(unittest.TestCase):
         self.assertIn("acceptance_committed_action", labels)
         self.assertIn("new map item", delta.summary)
         self.assertTrue(graph.edges)
-        self.assertEqual(("acceptance_committed_action",), memory.recent_interventions())
+        self.assertEqual(
+            ("acceptance_committed_action",), memory.recent_interventions()
+        )
 
     def test_memory_marks_recurring_items(self):
         memory = CaseMemory()
@@ -56,10 +58,14 @@ class CaseMemoryTests(unittest.TestCase):
             thoughts=("I am not cut out for this.",),
             emotions=("shame",),
         )
-        plan = ResponsePlan(validation="That sounds painful.", intervention="self_compassion")
+        plan = ResponsePlan(
+            validation="That sounds painful.", intervention="self_compassion"
+        )
 
         memory.apply_turn(extraction=extraction, kernel_snapshot={}, response_plan=plan)
-        delta = memory.apply_turn(extraction=extraction, kernel_snapshot={}, response_plan=plan)
+        delta = memory.apply_turn(
+            extraction=extraction, kernel_snapshot={}, response_plan=plan
+        )
         node = next(node for node in memory.snapshot().nodes if node.label == "shame")
 
         self.assertEqual(2, node.seen_count)
@@ -143,9 +149,7 @@ class CaseMemoryTests(unittest.TestCase):
             behaviors=("procrastination",),
         )
         kernel_snapshot = {
-            "hypotheses": (
-                {"source": "act", "pattern": "experiential_avoidance"},
-            )
+            "hypotheses": ({"source": "act", "pattern": "experiential_avoidance"},)
         }
         plan = ResponsePlan(
             validation="That makes sense.",
@@ -176,7 +180,9 @@ class CaseMemoryTests(unittest.TestCase):
         extraction = ExtractedCoachingState(emotions=("sadness",))
         plan = ResponsePlan(validation="That sounds hard.")
         memory.apply_turn(extraction=extraction, kernel_snapshot={}, response_plan=plan)
-        sadness = next(node for node in memory.snapshot().nodes if node.label == "sadness")
+        sadness = next(
+            node for node in memory.snapshot().nodes if node.label == "sadness"
+        )
 
         confirmed = memory.apply_feedback(sadness.id, "confirm")
         rejected = memory.apply_feedback(sadness.id, "reject")
@@ -197,7 +203,9 @@ class CaseMemoryTests(unittest.TestCase):
             kernel_snapshot={},
             response_plan=plan,
         )
-        first_id = next(node.id for node in memory.snapshot().nodes if node.label == "first")
+        first_id = next(
+            node.id for node in memory.snapshot().nodes if node.label == "first"
+        )
         memory.apply_turn(
             extraction=ExtractedCoachingState(emotions=("second",)),
             kernel_snapshot={},
@@ -211,8 +219,7 @@ class CaseMemoryTests(unittest.TestCase):
 
         self.assertNotIn(first_id, {node.id for node in memory.snapshot().nodes})
         archived = {
-            node.id: node
-            for node in memory.snapshot(include_archived=True).nodes
+            node.id: node for node in memory.snapshot(include_archived=True).nodes
         }
         self.assertEqual("archived", archived[first_id].status)
         self.assertEqual(1, memory.snapshot().archived_node_count)
@@ -226,7 +233,9 @@ class CaseMemoryTests(unittest.TestCase):
             kernel_snapshot={},
             response_plan=plan,
         )
-        sadness_id = next(node.id for node in memory.snapshot().nodes if node.label == "sadness")
+        sadness_id = next(
+            node.id for node in memory.snapshot().nodes if node.label == "sadness"
+        )
         memory.apply_turn(
             extraction=ExtractedCoachingState(emotions=("anxiety",)),
             kernel_snapshot={},
@@ -245,7 +254,9 @@ class CaseMemoryTests(unittest.TestCase):
             kernel_snapshot={},
             response_plan=plan,
         )
-        sadness = next(node for node in memory.snapshot().nodes if node.id == sadness_id)
+        sadness = next(
+            node for node in memory.snapshot().nodes if node.id == sadness_id
+        )
 
         self.assertEqual("tentative", sadness.status)
         self.assertEqual(2, sadness.seen_count)
@@ -278,7 +289,9 @@ class CaseMemoryTests(unittest.TestCase):
             kernel_snapshot={},
             response_plan=plan,
         )
-        important = next(node for node in memory.snapshot().nodes if node.label == "important")
+        important = next(
+            node for node in memory.snapshot().nodes if node.label == "important"
+        )
         memory.apply_feedback(important.id, "confirm")
         for index in range(5):
             memory.apply_turn(
@@ -301,7 +314,9 @@ class CaseMemoryTests(unittest.TestCase):
             emotions=("shame",),
             behaviors=("avoidance",),
         )
-        plan = ResponsePlan(validation="That sounds painful.", intervention="self_compassion")
+        plan = ResponsePlan(
+            validation="That sounds painful.", intervention="self_compassion"
+        )
         memory.apply_turn(extraction=extraction, kernel_snapshot={}, response_plan=plan)
         shame = next(node for node in memory.snapshot().nodes if node.label == "shame")
         memory.apply_feedback(shame.id, "reject")

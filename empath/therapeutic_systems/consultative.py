@@ -156,15 +156,30 @@ class ConsultativeSystem(TherapeuticSystem):
 
     def score_bonus(self, intervention: str, patterns: set[str]) -> float:
         score = 0.0
-        if "interaction_repair" in patterns and intervention == "active_listening_repair":
+        if (
+            "interaction_repair" in patterns
+            and intervention == "active_listening_repair"
+        ):
             score += 5.0
-        if "concise_factual_answer" in patterns and intervention == "concise_factual_answer":
+        if (
+            "concise_factual_answer" in patterns
+            and intervention == "concise_factual_answer"
+        ):
             score += 3.5
-        if "advisory_problem_solving" in patterns and intervention == "advisory_recommendation":
+        if (
+            "advisory_problem_solving" in patterns
+            and intervention == "advisory_recommendation"
+        ):
             score += 3.0
-        if "instructional_explanation" in patterns and intervention == "instructional_explanation":
+        if (
+            "instructional_explanation" in patterns
+            and intervention == "instructional_explanation"
+        ):
             score += 2.75
-        if "analytical_synthesis" in patterns and intervention == "analytical_synthesis":
+        if (
+            "analytical_synthesis" in patterns
+            and intervention == "analytical_synthesis"
+        ):
             score += 3.0
         if "creative_ideation" in patterns and intervention == "creative_ideation":
             score += 2.75

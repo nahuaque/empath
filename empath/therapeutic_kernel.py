@@ -370,27 +370,84 @@ class TherapeuticReasoningKernel:
         )
         facts(
             self.recipe_rationale,
-            ("validate_then_check_in", "Start with validation, then ask for one gentle bit of context."),
-            ("validate_then_ground", "Validate the feeling, then reduce activation before exploring."),
-            ("stabilize_then_choose", "Use stabilization before problem solving or belief work."),
+            (
+                "validate_then_check_in",
+                "Start with validation, then ask for one gentle bit of context.",
+            ),
+            (
+                "validate_then_ground",
+                "Validate the feeling, then reduce activation before exploring.",
+            ),
+            (
+                "stabilize_then_choose",
+                "Use stabilization before problem solving or belief work.",
+            ),
             ("safety_first", "Address immediate safety before any coaching technique."),
-            ("validate_defuse_act", "Soften identity-fused thoughts, then move toward a valued action."),
-            ("validate_accept_act", "Make room for discomfort and take one small approach step."),
+            (
+                "validate_defuse_act",
+                "Soften identity-fused thoughts, then move toward a valued action.",
+            ),
+            (
+                "validate_accept_act",
+                "Make room for discomfort and take one small approach step.",
+            ),
             ("values_to_micro_action", "Reconnect the value to a visible next action."),
-            ("validate_self_context", "Separate the observer from the self-story before choosing a move."),
-            ("validate_self_worth", "Protect worth from becoming fused with performance or approval."),
-            ("validate_check_facts", "Validate the concern, then separate facts from predictions."),
-            ("validate_preference_rewrite", "Move from rigid demand to flexible preference after validation."),
-            ("validate_tolerance_action", "Build tolerable contact with discomfort, then choose a small action."),
-            ("wise_mind_decide_act", "Balance emotion and facts, then take a reversible step."),
-            ("regulate_check_act", "Regulate first, check the emotion-action loop, then choose skillfully."),
-            ("reduce_vulnerability_regulate", "Lower biological/contextual vulnerability before solving."),
-            ("validate_interpersonal_script", "Validate the stakes, then script an effective ask or boundary."),
-            ("acceptance_willing_action", "Notice control struggle, practice willingness, and take a small step."),
-            ("pause_describe_resonate", "Slow down, contact the felt sense, describe it, and check which words resonate."),
-            ("describe_resonate_track", "Find language that fits the body sense and watch for a felt shift."),
-            ("validate_distance_resonate", "Validate the pain, create space from the critic, then check what words fit."),
-            ("pause_track_shift", "Pause with the body sense and track whether anything changes as it is named."),
+            (
+                "validate_self_context",
+                "Separate the observer from the self-story before choosing a move.",
+            ),
+            (
+                "validate_self_worth",
+                "Protect worth from becoming fused with performance or approval.",
+            ),
+            (
+                "validate_check_facts",
+                "Validate the concern, then separate facts from predictions.",
+            ),
+            (
+                "validate_preference_rewrite",
+                "Move from rigid demand to flexible preference after validation.",
+            ),
+            (
+                "validate_tolerance_action",
+                "Build tolerable contact with discomfort, then choose a small action.",
+            ),
+            (
+                "wise_mind_decide_act",
+                "Balance emotion and facts, then take a reversible step.",
+            ),
+            (
+                "regulate_check_act",
+                "Regulate first, check the emotion-action loop, then choose skillfully.",
+            ),
+            (
+                "reduce_vulnerability_regulate",
+                "Lower biological/contextual vulnerability before solving.",
+            ),
+            (
+                "validate_interpersonal_script",
+                "Validate the stakes, then script an effective ask or boundary.",
+            ),
+            (
+                "acceptance_willing_action",
+                "Notice control struggle, practice willingness, and take a small step.",
+            ),
+            (
+                "pause_describe_resonate",
+                "Slow down, contact the felt sense, describe it, and check which words resonate.",
+            ),
+            (
+                "describe_resonate_track",
+                "Find language that fits the body sense and watch for a felt shift.",
+            ),
+            (
+                "validate_distance_resonate",
+                "Validate the pain, create space from the critic, then check what words fit.",
+            ),
+            (
+                "pause_track_shift",
+                "Pause with the body sense and track whether anything changes as it is named.",
+            ),
         )
         facts(
             self.formulation_pattern,
@@ -807,12 +864,16 @@ class TherapeuticReasoningKernel:
     def hypotheses_for(self, state_id: str) -> tuple[Hypothesis, ...]:
         source = var()
         pattern = var()
-        rows = run(0, (source, pattern), self.problem_patterno(state_id, source, pattern))
+        rows = run(
+            0, (source, pattern), self.problem_patterno(state_id, source, pattern)
+        )
         return tuple(Hypothesis(src, pat) for src, pat in _unique_sorted(rows))
 
     def candidate_intervention_names(self, state_id: str) -> tuple[str, ...]:
         intervention = var()
-        return _unique_sorted(run(0, intervention, self.interventiono(state_id, intervention)))
+        return _unique_sorted(
+            run(0, intervention, self.interventiono(state_id, intervention))
+        )
 
     def safe_intervention_names(self, state_id: str) -> tuple[str, ...]:
         intervention = var()
@@ -830,7 +891,9 @@ class TherapeuticReasoningKernel:
 
     def candidate_formulation_names(self, state_id: str) -> tuple[str, ...]:
         formulation = var()
-        return _unique_sorted(run(0, formulation, self.formulationo(state_id, formulation)))
+        return _unique_sorted(
+            run(0, formulation, self.formulationo(state_id, formulation))
+        )
 
     def states_for_intervention(self, intervention: str) -> tuple[str, ...]:
         state = var()
@@ -838,7 +901,9 @@ class TherapeuticReasoningKernel:
 
     def safe_states_for_intervention(self, intervention: str) -> tuple[str, ...]:
         state = var()
-        return _unique_sorted(run(0, state, self.safe_interventiono(state, intervention)))
+        return _unique_sorted(
+            run(0, state, self.safe_interventiono(state, intervention))
+        )
 
     def states_for_recipe(self, recipe: str) -> tuple[str, ...]:
         state = var()
@@ -852,7 +917,9 @@ class TherapeuticReasoningKernel:
         state = var()
         return _unique_sorted(run(0, state, self.formulationo(state, formulation)))
 
-    def contraindicated_states_for_intervention(self, intervention: str) -> tuple[str, ...]:
+    def contraindicated_states_for_intervention(
+        self, intervention: str
+    ) -> tuple[str, ...]:
         state = var()
         return _unique_sorted(
             run(
@@ -863,7 +930,9 @@ class TherapeuticReasoningKernel:
             )
         )
 
-    def states_for_pattern(self, pattern: str, *, source: str | None = None) -> tuple[str, ...]:
+    def states_for_pattern(
+        self, pattern: str, *, source: str | None = None
+    ) -> tuple[str, ...]:
         state = var()
         found_source = var()
         goals = [self.problem_patterno(state, found_source, pattern)]
@@ -873,7 +942,9 @@ class TherapeuticReasoningKernel:
 
     def patterns_for_intervention(self, intervention: str) -> tuple[str, ...]:
         pattern = var()
-        return _unique_sorted(run(0, pattern, self.pattern_intervention(pattern, intervention)))
+        return _unique_sorted(
+            run(0, pattern, self.pattern_intervention(pattern, intervention))
+        )
 
     def patterns_for_recipe(self, recipe: str) -> tuple[str, ...]:
         pattern = var()
@@ -890,7 +961,9 @@ class TherapeuticReasoningKernel:
     ) -> tuple[Hypothesis, ...]:
         return self._hypotheses_for_intervention(state_id, intervention)
 
-    def hypotheses_for_recipe(self, state_id: str, recipe: str) -> tuple[Hypothesis, ...]:
+    def hypotheses_for_recipe(
+        self, state_id: str, recipe: str
+    ) -> tuple[Hypothesis, ...]:
         source = var()
         pattern = var()
         rows = run(
@@ -939,10 +1012,14 @@ class TherapeuticReasoningKernel:
         """Explain the backward paths that would make an intervention coherent."""
 
         hypotheses = self.hypotheses_for_intervention(state_id, intervention)
-        satisfied_patterns = _unique_sorted(hypothesis.pattern for hypothesis in hypotheses)
+        satisfied_patterns = _unique_sorted(
+            hypothesis.pattern for hypothesis in hypotheses
+        )
         possible_patterns = self.patterns_for_intervention(intervention)
         alternative_patterns = tuple(
-            pattern for pattern in possible_patterns if pattern not in set(satisfied_patterns)
+            pattern
+            for pattern in possible_patterns
+            if pattern not in set(satisfied_patterns)
         )
         contraindications = self.contraindication_reasons(state_id, intervention)
         return {
@@ -963,7 +1040,9 @@ class TherapeuticReasoningKernel:
         state_ids: Iterable[str] | None = None,
     ) -> tuple[dict[str, Any], ...]:
         ids = tuple(state_ids) if state_ids is not None else tuple(sorted(self._states))
-        return tuple(self.intervention_report(state_id, intervention) for state_id in ids)
+        return tuple(
+            self.intervention_report(state_id, intervention) for state_id in ids
+        )
 
     def exercises_for(self, intervention: str) -> tuple[str, ...]:
         exercise = var()
@@ -974,12 +1053,16 @@ class TherapeuticReasoningKernel:
     def recipe_steps_for(self, recipe: str) -> tuple[str, ...]:
         index = var()
         intervention = var()
-        rows = run(0, (index, intervention), self.recipe_step(recipe, index, intervention))
+        rows = run(
+            0, (index, intervention), self.recipe_step(recipe, index, intervention)
+        )
         return tuple(intervention for _index, intervention in sorted(set(rows)))
 
     def recipe_rationale_for(self, recipe: str) -> str | None:
         rationale = var()
-        return _first(_unique_sorted(run(0, rationale, self.recipe_rationale(recipe, rationale))))
+        return _first(
+            _unique_sorted(run(0, rationale, self.recipe_rationale(recipe, rationale)))
+        )
 
     def ranked_interventions(
         self,
@@ -1042,7 +1125,9 @@ class TherapeuticReasoningKernel:
                 continue
             hypotheses = self.hypotheses_for_recipe(state_id, recipe)
             steps = self.recipe_steps_for(recipe)
-            score = self._recipe_score(state_id, recipe, steps, hypotheses, contraindications)
+            score = self._recipe_score(
+                state_id, recipe, steps, hypotheses, contraindications
+            )
             recipes.append(
                 InterventionRecipe(
                     recipe=recipe,
@@ -1073,7 +1158,9 @@ class TherapeuticReasoningKernel:
             possible_patterns = self.patterns_for_formulation(name)
             matched_patterns = {hypothesis.pattern for hypothesis in evidence}
             missing_evidence = tuple(
-                pattern for pattern in possible_patterns if pattern not in matched_patterns
+                pattern
+                for pattern in possible_patterns
+                if pattern not in matched_patterns
             )
             score = self._formulation_score(
                 state_id,
@@ -1144,7 +1231,10 @@ class TherapeuticReasoningKernel:
                     target_formulations=_target_formulations(top, runner_up),
                     supported_by=_combined_evidence(top, runner_up),
                     missing_evidence=_combined_missing_evidence(top, runner_up),
-                    expected_information=("activation_level", "readiness_for_problem_solving"),
+                    expected_information=(
+                        "activation_level",
+                        "readiness_for_problem_solving",
+                    ),
                     intervention="present_moment_grounding",
                 )
             )
@@ -1235,7 +1325,8 @@ class TherapeuticReasoningKernel:
                 asdict(item) for item in self.clarifying_moves(state_id, limit=limit)
             ],
             "candidates": [
-                asdict(item) for item in self.ranked_interventions(state_id, limit=limit)
+                asdict(item)
+                for item in self.ranked_interventions(state_id, limit=limit)
             ],
             "recipes": [
                 asdict(item) for item in self.ranked_recipes(state_id, limit=limit)
@@ -1285,7 +1376,9 @@ class TherapeuticReasoningKernel:
             state_value, recipe_value = reify((state, recipe), substitution)
             if isvar(state_value) or isvar(recipe_value):
                 return
-            if self.recipe_contraindication_reasons(str(state_value), str(recipe_value)):
+            if self.recipe_contraindication_reasons(
+                str(state_value), str(recipe_value)
+            ):
                 return
             yield substitution
 
@@ -1322,7 +1415,9 @@ class TherapeuticReasoningKernel:
 
     def _preferred_modalities(self, state_id: str) -> tuple[str, ...]:
         modality = var()
-        return _unique_sorted(run(0, modality, self.preferred_modality(state_id, modality)))
+        return _unique_sorted(
+            run(0, modality, self.preferred_modality(state_id, modality))
+        )
 
     def _score(
         self,
@@ -1345,7 +1440,11 @@ class TherapeuticReasoningKernel:
         if patterns.intersection({"sadness", "shame", "anger", "anxiety", "overwhelm"}):
             if intervention == "validation":
                 score += 1.75
-            if intervention in {"gentle_check_in", "self_compassion", "needs_exploration"}:
+            if intervention in {
+                "gentle_check_in",
+                "self_compassion",
+                "needs_exploration",
+            }:
                 score += 1.25
         if "high_distress" in patterns:
             if intervention == "validation":
@@ -1408,13 +1507,25 @@ class TherapeuticReasoningKernel:
                 score += 2.25
             elif formulation not in {"safety_first", "high_distress_first"}:
                 score -= 0.75
-        if "minimal_disclosure" in patterns and formulation == "minimal_disclosure_affect":
+        if (
+            "minimal_disclosure" in patterns
+            and formulation == "minimal_disclosure_affect"
+        ):
             score += 1.25
-        if "avoidance_identity_threat" in patterns and formulation == "avoidance_identity_threat":
+        if (
+            "avoidance_identity_threat" in patterns
+            and formulation == "avoidance_identity_threat"
+        ):
             score += 1.5
-        if "valued_action_procrastination" in patterns and formulation == "valued_action_procrastination":
+        if (
+            "valued_action_procrastination" in patterns
+            and formulation == "valued_action_procrastination"
+        ):
             score += 1.25
-        if "shame_self_worth_fusion" in patterns and formulation == "shame_self_worth_fusion":
+        if (
+            "shame_self_worth_fusion" in patterns
+            and formulation == "shame_self_worth_fusion"
+        ):
             score += 1.25
         if (
             patterns.intersection(
@@ -1427,7 +1538,10 @@ class TherapeuticReasoningKernel:
             and formulation == "felt_sense_unclear_meaning"
         ):
             score += 1.25
-        if self._has_recent_intervention(state_id, "safety_planning") and formulation != "safety_first":
+        if (
+            self._has_recent_intervention(state_id, "safety_planning")
+            and formulation != "safety_first"
+        ):
             score += 0.25
         return round(score, 2)
 
@@ -1526,7 +1640,11 @@ class TherapeuticReasoningKernel:
         if not interventions:
             for pattern in self.patterns_for_formulation(formulation):
                 interventions.extend(
-                    run(0, intervention, self.pattern_intervention(pattern, intervention))
+                    run(
+                        0,
+                        intervention,
+                        self.pattern_intervention(pattern, intervention),
+                    )
                 )
         return _unique_sorted(interventions)[:5]
 
@@ -1547,13 +1665,25 @@ class TherapeuticReasoningKernel:
 
     def _formulation_label(self, formulation: str) -> str:
         label = var()
-        return _first(_unique_sorted(run(0, label, self.formulation_label(formulation, label)))) or formulation
+        return (
+            _first(
+                _unique_sorted(
+                    run(0, label, self.formulation_label(formulation, label))
+                )
+            )
+            or formulation
+        )
 
     def _formulation_summary(self, formulation: str) -> str:
         summary = var()
-        return _first(
-            _unique_sorted(run(0, summary, self.formulation_summary(formulation, summary)))
-        ) or ""
+        return (
+            _first(
+                _unique_sorted(
+                    run(0, summary, self.formulation_summary(formulation, summary))
+                )
+            )
+            or ""
+        )
 
     def _formulation_discriminator(self, formulation: str) -> str | None:
         question = var()
@@ -1565,7 +1695,9 @@ class TherapeuticReasoningKernel:
 
     def _formulation_focus(self, formulation: str) -> str | None:
         focus = var()
-        return _first(_unique_sorted(run(0, focus, self.formulation_focus(formulation, focus))))
+        return _first(
+            _unique_sorted(run(0, focus, self.formulation_focus(formulation, focus)))
+        )
 
     def _recipe_score(
         self,
@@ -1591,13 +1723,22 @@ class TherapeuticReasoningKernel:
             score += 2.25
         if "shame_self_worth_fusion" in patterns and recipe == "validate_self_worth":
             score += 2.0
-        if "valued_action_procrastination" in patterns and recipe == "values_to_micro_action":
+        if (
+            "valued_action_procrastination" in patterns
+            and recipe == "values_to_micro_action"
+        ):
             score += 2.0
         if "certainty_avoidance_loop" in patterns and recipe == "wise_mind_decide_act":
             score += 1.75
-        if "control_struggle_loop" in patterns and recipe == "acceptance_willing_action":
+        if (
+            "control_struggle_loop" in patterns
+            and recipe == "acceptance_willing_action"
+        ):
             score += 1.75
-        if "vulnerability_distress_loop" in patterns and recipe == "reduce_vulnerability_regulate":
+        if (
+            "vulnerability_distress_loop" in patterns
+            and recipe == "reduce_vulnerability_regulate"
+        ):
             score += 1.75
         if "approval_threat_loop" in patterns and recipe == "validate_check_facts":
             score += 1.5
@@ -1608,7 +1749,10 @@ class TherapeuticReasoningKernel:
             score += 1.75
         if "symbolization_needed" in patterns and recipe == "describe_resonate_track":
             score += 1.5
-        if "inner_critic_presence" in patterns and recipe == "validate_distance_resonate":
+        if (
+            "inner_critic_presence" in patterns
+            and recipe == "validate_distance_resonate"
+        ):
             score += 1.5
         if "felt_shift_possible" in patterns and recipe == "pause_track_shift":
             score += 1.25
@@ -1616,9 +1760,7 @@ class TherapeuticReasoningKernel:
         preferred = set(self._preferred_modalities(state_id))
         if preferred:
             recipe_modalities = {
-                modality
-                for step in steps
-                for modality in self._modalities_for(step)
+                modality for step in steps for modality in self._modalities_for(step)
             }
             if preferred.intersection(recipe_modalities):
                 score += 1.0
@@ -1735,11 +1877,15 @@ _LABEL_ALIASES = {
 
 
 def _labels(values: Iterable[str] | str | None) -> tuple[str, ...]:
-    return _unique_preserving(_label(value) for value in _iter_values(values) if str(value).strip())
+    return _unique_preserving(
+        _label(value) for value in _iter_values(values) if str(value).strip()
+    )
 
 
 def _strings(values: Iterable[str] | str | None) -> tuple[str, ...]:
-    return tuple(str(value).strip() for value in _iter_values(values) if str(value).strip())
+    return tuple(
+        str(value).strip() for value in _iter_values(values) if str(value).strip()
+    )
 
 
 def _iter_values(values: Iterable[str] | str | None):
@@ -1781,7 +1927,9 @@ def _infer_behaviors(text: str) -> set[str]:
     behaviors: set[str] = set()
     if re.search(r"\b(avoid|avoiding|procrastinat\w*|putting off)\b", lowered):
         behaviors.add("avoidance")
-    if re.search(r"\b(procrastinat\w*|putting off|keep putting off|put off)\b", lowered):
+    if re.search(
+        r"\b(procrastinat\w*|putting off|keep putting off|put off)\b", lowered
+    ):
         behaviors.add("procrastination")
     if re.search(r"\b(withdraw|shut down|isolat)\b", lowered):
         behaviors.add("withdrawal")
@@ -1864,7 +2012,10 @@ def _infer_state_features(text: str) -> set[str]:
         lowered,
     ):
         features.add("autopilot_reactivity")
-    if re.search(r"\b(panic|panicking|can't breathe|cannot breathe|can't cope|cannot cope)\b", lowered):
+    if re.search(
+        r"\b(panic|panicking|can't breathe|cannot breathe|can't cope|cannot cope)\b",
+        lowered,
+    ):
         features.update(("high_distress", "needs_validation"))
     if re.search(
         r"\b(out of control|emotionally flooded|flooded|losing it|spiraling|"
@@ -2037,7 +2188,9 @@ def _infer_state_features(text: str) -> set[str]:
         lowered,
     ):
         features.add("felt_shift")
-    if re.search(r"\b(always happens|keeps happening|again and again|same pattern)\b", lowered):
+    if re.search(
+        r"\b(always happens|keeps happening|again and again|same pattern)\b", lowered
+    ):
         features.add("recurring_pattern")
     if re.search(
         r"\b(don't know what matters|do not know what matters|don't know what i want|"
@@ -2067,11 +2220,15 @@ def _infer_text_features(text: str) -> set[str]:
     lowered = text.casefold()
     features: set[str] = set()
 
-    if re.search(r"\b(disaster|catastrophe|ruined|everything is over|worst)\b", lowered):
+    if re.search(
+        r"\b(disaster|catastrophe|ruined|everything is over|worst)\b", lowered
+    ):
         features.add("future_disaster")
     if re.search(r"\b(awful|terrible|horrible|unbearable)\b", lowered):
         features.add("awful_outcome")
-    if re.search(r"\b(can't stand|cannot stand|can't bear|cannot bear|unbearable)\b", lowered):
+    if re.search(
+        r"\b(can't stand|cannot stand|can't bear|cannot bear|unbearable)\b", lowered
+    ):
         features.add("unbearable_claim")
     if re.search(r"\b(must|should|have to|need to)\b", lowered):
         features.add("demanding_rule")
@@ -2084,12 +2241,17 @@ def _infer_text_features(text: str) -> set[str]:
         features.add("mind_reading_claim")
     if re.search(r"\b(always|never|completely|perfect|total failure)\b", lowered):
         features.add("binary_evaluation")
-    if re.search(r"\b(proves?|means) (that )?(i am|i'm|im|i cannot|i can't)\b", lowered):
-        features.add("single_event_global_conclusion")
     if re.search(
-        r"\b(i am|i'm|im) (a )?(failure|worthless|broken|not good enough)\b",
-        lowered,
-    ) or "not cut out" in lowered:
+        r"\b(proves?|means) (that )?(i am|i'm|im|i cannot|i can't)\b", lowered
+    ):
+        features.add("single_event_global_conclusion")
+    if (
+        re.search(
+            r"\b(i am|i'm|im) (a )?(failure|worthless|broken|not good enough)\b",
+            lowered,
+        )
+        or "not cut out" in lowered
+    ):
         features.update(
             {
                 "global_label",
@@ -2097,7 +2259,9 @@ def _infer_text_features(text: str) -> set[str]:
                 "identity_fusion",
             }
         )
-    if re.search(r"\b(i can't stop thinking|this thought is true|it proves who i am)\b", lowered):
+    if re.search(
+        r"\b(i can't stop thinking|this thought is true|it proves who i am)\b", lowered
+    ):
         features.add("sticky_thought")
     if re.search(
         r"\b(doesn't count|does not count|just luck|only luck|anyone could|"

@@ -127,8 +127,14 @@ class CoachingFocusSystem(TherapeuticSystem):
                 self._attention_environment_designo(kernel, state),
                 eq(pattern, "attention_environment_design"),
             ],
-            [self._resilience_recoveryo(kernel, state), eq(pattern, "resilience_recovery")],
-            [self._integration_reviewo(kernel, state), eq(pattern, "integration_review")],
+            [
+                self._resilience_recoveryo(kernel, state),
+                eq(pattern, "resilience_recovery"),
+            ],
+            [
+                self._integration_reviewo(kernel, state),
+                eq(pattern, "integration_review"),
+            ],
         )
 
     def score_bonus(self, intervention: str, patterns: set[str]) -> float:

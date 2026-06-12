@@ -297,7 +297,9 @@ Constraints:
 class TextFeatureExtraction(BaseModel):
     """Canonical kernel features attached to one extracted text observation."""
 
-    text: str = Field(description="Exact thought or belief text this feature set describes.")
+    text: str = Field(
+        description="Exact thought or belief text this feature set describes."
+    )
     features: tuple[str, ...] = Field(default_factory=tuple)
 
 
@@ -796,7 +798,9 @@ def route_conversation_mode(user_message: str) -> ConversationModeRoute:
             label=MODE_LABELS["safety_support"],
             reason="The turn contains possible immediate safety-risk language.",
             confidence=0.95,
-            evidence=_route_evidence(text, ("hurt myself", "kill myself", "want to die", "not safe")),
+            evidence=_route_evidence(
+                text, ("hurt myself", "kill myself", "want to die", "not safe")
+            ),
         )
 
     if _looks_like_framework_explanation_request(text):
@@ -807,7 +811,18 @@ def route_conversation_mode(user_message: str) -> ConversationModeRoute:
             confidence=0.9,
             evidence=_route_evidence(
                 text,
-                ("explain", "what is", "ACT", "CBT", "REBT", "DBT", "MBSR", "GTD", "OKR", "WOOP"),
+                (
+                    "explain",
+                    "what is",
+                    "ACT",
+                    "CBT",
+                    "REBT",
+                    "DBT",
+                    "MBSR",
+                    "GTD",
+                    "OKR",
+                    "WOOP",
+                ),
             ),
         )
 
@@ -821,7 +836,16 @@ def route_conversation_mode(user_message: str) -> ConversationModeRoute:
             label=MODE_LABELS["workspace_command"],
             reason="The turn appears to be an app/workspace command rather than a coaching request.",
             confidence=0.82,
-            evidence=_route_evidence(text, ("clear", "reset", "working map", "new conversation", "switch conversation")),
+            evidence=_route_evidence(
+                text,
+                (
+                    "clear",
+                    "reset",
+                    "working map",
+                    "new conversation",
+                    "switch conversation",
+                ),
+            ),
         )
 
     if _route_matches(
@@ -835,7 +859,9 @@ def route_conversation_mode(user_message: str) -> ConversationModeRoute:
             label=MODE_LABELS["map_correction"],
             reason="The turn appears to correct the working map or a prior assistant inference.",
             confidence=0.82,
-            evidence=_route_evidence(text, ("wrong", "not true", "incorrect", "fix the map", "remove")),
+            evidence=_route_evidence(
+                text, ("wrong", "not true", "incorrect", "fix the map", "remove")
+            ),
         )
 
     if _route_matches(
@@ -848,7 +874,16 @@ def route_conversation_mode(user_message: str) -> ConversationModeRoute:
             label=MODE_LABELS["reflective_listening"],
             reason="The turn requests a reflective playback rather than a new coaching intervention.",
             confidence=0.88,
-            evidence=_route_evidence(text, ("reflect back", "mirror", "reflective listening", "play back", "perspective")),
+            evidence=_route_evidence(
+                text,
+                (
+                    "reflect back",
+                    "mirror",
+                    "reflective listening",
+                    "play back",
+                    "perspective",
+                ),
+            ),
         )
 
     if _route_matches(
@@ -862,7 +897,17 @@ def route_conversation_mode(user_message: str) -> ConversationModeRoute:
             label=MODE_LABELS["interaction_repair"],
             reason="The turn directs frustration or aggression at Empath, so the response should repair the interaction without defensiveness.",
             confidence=0.86,
-            evidence=_route_evidence(text, ("useless", "you suck", "shut up", "fuck you", "idiot", "bad assistant")),
+            evidence=_route_evidence(
+                text,
+                (
+                    "useless",
+                    "you suck",
+                    "shut up",
+                    "fuck you",
+                    "idiot",
+                    "bad assistant",
+                ),
+            ),
         )
 
     features = _infer_state_features(text)
@@ -917,10 +962,7 @@ def route_for_response_plan(
             confidence=0.86,
             evidence=(intervention,),
         )
-    if (
-        route.mode == "coaching_turn"
-        and is_consultative_intervention(intervention)
-    ):
+    if route.mode == "coaching_turn" and is_consultative_intervention(intervention):
         return ConversationModeRoute(
             mode="consultative_turn",
             label=MODE_LABELS["consultative_turn"],
@@ -937,10 +979,7 @@ def _route_matches(lowered_message: str, pattern: str) -> bool:
 
 def _normalize_route_text(message: str) -> str:
     return (
-        message.replace("’", "'")
-        .replace("‘", "'")
-        .replace("“", '"')
-        .replace("”", '"')
+        message.replace("’", "'").replace("‘", "'").replace("“", '"').replace("”", '"')
     )
 
 
@@ -1163,8 +1202,7 @@ def build_response_prompt(
             f"{policy_context.strip()}\n\n"
         )
     return (
-        prompt
-        + "Create the structured response plan now. Honor the conversation mode "
+        prompt + "Create the structured response plan now. Honor the conversation mode "
         "route as the first-pass interaction contract unless safety evidence "
         "requires escalation. Choose interventions from the kernel candidates "
         "when possible."
@@ -1193,19 +1231,23 @@ def with_intervention_deliberation(
     selected = _select_deliberated_candidate(candidates)
     runner_up = next(
         (
-            candidate for candidate in candidates
+            candidate
+            for candidate in candidates
             if candidate.get("intervention") != selected.get("intervention")
             and not candidate.get("contraindications")
         ),
         None,
     )
     rows = []
-    for candidate in _ordered_deliberation_candidates(candidates, selected, runner_up, limit=limit):
+    for candidate in _ordered_deliberation_candidates(
+        candidates, selected, runner_up, limit=limit
+    ):
         role = (
             "selected"
             if candidate.get("intervention") == selected.get("intervention")
             else "runner_up"
-            if runner_up and candidate.get("intervention") == runner_up.get("intervention")
+            if runner_up
+            and candidate.get("intervention") == runner_up.get("intervention")
             else "not_chosen"
         )
         rows.append(
@@ -1262,7 +1304,8 @@ def simulate_counterfactual_interventions(
         )
         selected_candidate = next(
             (
-                item for item in candidates
+                item
+                for item in candidates
                 if str(item.get("intervention")) == selected_name
             ),
             candidates[0] if candidates else {},
@@ -1330,13 +1373,13 @@ def simulate_counterfactual_interventions(
 
 
 def _select_deliberated_candidate(candidates: list[dict[str, Any]]) -> dict[str, Any]:
-    safe = [candidate for candidate in candidates if not candidate.get("contraindications")]
+    safe = [
+        candidate for candidate in candidates if not candidate.get("contraindications")
+    ]
     if not safe:
         return candidates[0]
     active = [
-        candidate
-        for candidate in safe
-        if candidate.get("intervention") != "validation"
+        candidate for candidate in safe if candidate.get("intervention") != "validation"
     ]
     return active[0] if active else safe[0]
 
@@ -1378,15 +1421,16 @@ def _deliberation_row(
         if isinstance(item, dict) and item.get("pattern")
     ]
     supported_patterns = _unique_text(
-        str(item.get("pattern"))
-        for item in supported_hypotheses
-        if item.get("pattern")
+        str(item.get("pattern")) for item in supported_hypotheses if item.get("pattern")
     )
     missing_evidence = tuple(
-        pattern for pattern in possible_patterns
+        pattern
+        for pattern in possible_patterns
         if pattern not in set(supported_patterns)
     )
-    contraindications = tuple(str(item) for item in candidate.get("contraindications") or ())
+    contraindications = tuple(
+        str(item) for item in candidate.get("contraindications") or ()
+    )
     row = {
         "intervention": intervention,
         "role": role,
@@ -1445,10 +1489,17 @@ def _counterfactual_not_chosen_reason(
 ) -> str:
     if contraindications:
         return "Blocked or mistimed: " + ", ".join(contraindications[:2])
-    if candidate.get("intervention") == "validation" and selected.get("intervention") != "validation":
+    if (
+        candidate.get("intervention") == "validation"
+        and selected.get("intervention") != "validation"
+    ):
         return "Kept as the opening stance, not the main active step."
     if missing_evidence:
-        return "Less complete match; missing " + _format_label_text(list(missing_evidence[:2])) + "."
+        return (
+            "Less complete match; missing "
+            + _format_label_text(list(missing_evidence[:2]))
+            + "."
+        )
     return f"Lower ranked than {str(selected.get('intervention')).replace('_', ' ')}."
 
 
@@ -1488,7 +1539,11 @@ def _selected_counterfactual_risk(
         return "May not create enough movement if the user is ready for action."
     if "high_distress" in supported_by:
         return "Could still be mistimed if activation is higher than the text suggests."
-    if intervention in {"committed_action", "acceptance_committed_action", "behavioral_experiment"}:
+    if intervention in {
+        "committed_action",
+        "acceptance_committed_action",
+        "behavioral_experiment",
+    }:
         return "Could feel premature if emotion or shame needs more contact first."
     if intervention in {"cognitive_defusion", "evidence_check", "rebt_disputation"}:
         return "Could stay too cognitive if the user mainly needs support or grounding."
@@ -1665,7 +1720,9 @@ def format_kernel_snapshot(snapshot: dict[str, Any]) -> str:
     formulations = snapshot.get("formulations", [])
     if formulations:
         for item in formulations:
-            lines.append(f"- {item.get('score')}: {item.get('label') or item.get('formulation')}")
+            lines.append(
+                f"- {item.get('score')}: {item.get('label') or item.get('formulation')}"
+            )
             if item.get("discriminating_question"):
                 lines.append(f"  discriminator: {item['discriminating_question']}")
     else:
@@ -1675,7 +1732,9 @@ def format_kernel_snapshot(snapshot: dict[str, Any]) -> str:
     clarifying_moves = snapshot.get("clarifying_moves", [])
     if clarifying_moves:
         for item in clarifying_moves:
-            lines.append(f"- {item.get('priority')}: {item.get('kind')} - {item.get('question')}")
+            lines.append(
+                f"- {item.get('priority')}: {item.get('kind')} - {item.get('question')}"
+            )
             if item.get("target_formulations"):
                 lines.append(f"  targets: {', '.join(item['target_formulations'])}")
     else:
@@ -1705,7 +1764,9 @@ def format_kernel_snapshot(snapshot: dict[str, Any]) -> str:
             if item.get("exercise"):
                 lines.append(f"  exercise: {item['exercise']}")
             if item.get("contraindications"):
-                lines.append(f"  contraindications: {', '.join(item['contraindications'])}")
+                lines.append(
+                    f"  contraindications: {', '.join(item['contraindications'])}"
+                )
     else:
         lines.append("- none")
     return "\n".join(lines)
@@ -1901,7 +1962,9 @@ def cohere_response_plan(
                 f"Changed intervention to {best_intervention}.",
             )
 
-    if _needs_validation(kernel_snapshot) and not _substantive_validation(working.validation):
+    if _needs_validation(kernel_snapshot) and not _substantive_validation(
+        working.validation
+    ):
         issue(
             "validation_required",
             "error",
@@ -1941,7 +2004,10 @@ def cohere_response_plan(
                 "Replaced the exercise with the selected intervention's kernel exercise.",
             )
 
-    if _kernel_has_pattern(kernel_snapshot, "minimal_disclosure") and not working.question:
+    if (
+        _kernel_has_pattern(kernel_snapshot, "minimal_disclosure")
+        and not working.question
+    ):
         issue(
             "gentle_followup_missing",
             "warning",
@@ -1949,13 +2015,19 @@ def cohere_response_plan(
         )
 
     clarifying_move = _top_clarifying_move(kernel_snapshot)
-    if clarifying_move and not working.question and _should_apply_clarifying_move(clarifying_move):
+    if (
+        clarifying_move
+        and not working.question
+        and _should_apply_clarifying_move(clarifying_move)
+    ):
         issue(
             "clarifying_question_missing",
             "warning",
             "The differential formulation layer proposed a question that would reduce uncertainty.",
         )
-        working = working.model_copy(update={"question": clarifying_move.get("question")})
+        working = working.model_copy(
+            update={"question": clarifying_move.get("question")}
+        )
         repair(
             "clarifying_question_missing",
             "Inserted the top clarifying question from the kernel.",
@@ -1967,7 +2039,8 @@ def cohere_response_plan(
     )
     repaired_codes = {item["code"] for item in repairs}
     unrepaired_errors = [
-        item for item in issues
+        item
+        for item in issues
         if item["severity"] == "error" and item["code"] not in repaired_codes
     ]
     status = "passed"
@@ -2080,7 +2153,9 @@ def build_debug_trace(
             "clarifying_moves": clarifying_moves,
             "candidates": candidates,
             "recipes": recipes,
-            "intervention_deliberation": kernel_snapshot.get("intervention_deliberation")
+            "intervention_deliberation": kernel_snapshot.get(
+                "intervention_deliberation"
+            )
             or {},
             "counterfactual_simulation": counterfactuals,
         },
@@ -2185,9 +2260,7 @@ def format_debug_trace(trace: dict[str, Any]) -> str:
         for item in clarifying_moves:
             targets = ", ".join(item.get("target_formulations") or ())
             suffix = f" targets={targets}" if targets else ""
-            lines.append(
-                f"  {item.get('priority')}: {item.get('kind')}{suffix}"
-            )
+            lines.append(f"  {item.get('priority')}: {item.get('kind')}{suffix}")
             if item.get("question"):
                 lines.append(f"    question: {item.get('question')}")
     else:
@@ -2199,13 +2272,9 @@ def format_debug_trace(trace: dict[str, Any]) -> str:
         for item in candidates:
             contraindications = item.get("contraindications") or []
             suffix = (
-                f" contraindications={contraindications}"
-                if contraindications
-                else ""
+                f" contraindications={contraindications}" if contraindications else ""
             )
-            lines.append(
-                f"  {item.get('score')}: {item.get('intervention')}{suffix}"
-            )
+            lines.append(f"  {item.get('score')}: {item.get('intervention')}{suffix}")
     else:
         lines.append("  none")
 
@@ -2233,7 +2302,9 @@ def format_debug_trace(trace: dict[str, Any]) -> str:
     else:
         lines.append("  none")
 
-    counterfactuals = trace.get("counterfactuals") or kernel.get("counterfactual_simulation") or []
+    counterfactuals = (
+        trace.get("counterfactuals") or kernel.get("counterfactual_simulation") or []
+    )
     lines.append("- counterfactual simulation:")
     if counterfactuals:
         for item in counterfactuals[:4]:
@@ -2298,8 +2369,7 @@ def format_debug_trace(trace: dict[str, Any]) -> str:
             counts = memory.get("counts") or {}
             if counts:
                 lines.append(
-                    "  "
-                    + ", ".join(f"{key}={value}" for key, value in counts.items())
+                    "  " + ", ".join(f"{key}={value}" for key, value in counts.items())
                 )
 
     if policy := trace.get("policy"):
@@ -2412,7 +2482,9 @@ def chat_loop(
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run the DeepSeek-backed Empath chat CLI.")
+    parser = argparse.ArgumentParser(
+        description="Run the DeepSeek-backed Empath chat CLI."
+    )
     parser.add_argument(
         "--api-key-file",
         default=DEFAULT_API_KEY_FILE,
@@ -2476,7 +2548,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 
     if args.dry_run:
-        message = args.once or "I keep avoiding the prototype because if it is bad, I am a failure."
+        message = (
+            args.once
+            or "I keep avoiding the prototype because if it is bad, I am a failure."
+        )
         kernel = TherapeuticReasoningKernel()
         state = state_from_user_message(message, state_id="dry-run")
         kernel.add_state(state)
@@ -2594,9 +2669,7 @@ def draft_response_plan(
 
     clarifying_move = _top_clarifying_move(kernel_snapshot)
     question = (
-        _clean_plan_text(clarifying_move.get("question"))
-        if clarifying_move
-        else None
+        _clean_plan_text(clarifying_move.get("question")) if clarifying_move else None
     ) or "What would be one small next step that feels workable right now?"
 
     return sanitize_response_plan(
@@ -2733,14 +2806,18 @@ def _deterministic_factual_answer(user_message: str) -> str | None:
             "If the data changes or is corrupted, recomputing the checksum will usually "
             "produce a different value, which makes mismatches easier to detect."
         )
-    if re.search(r"\bSSE\b|server-sent events?|eventsource", user_message, re.IGNORECASE):
+    if re.search(
+        r"\bSSE\b|server-sent events?|eventsource", user_message, re.IGNORECASE
+    ):
         return (
             "SSE, or Server-Sent Events, is a simple HTTP streaming pattern where a "
             "server pushes text events to a browser over one long-lived connection. "
             "It is useful for one-way updates like assistant progress, notifications, "
             "or logs."
         )
-    if re.search(r"\bAPI\b|application programming interface", user_message, re.IGNORECASE):
+    if re.search(
+        r"\bAPI\b|application programming interface", user_message, re.IGNORECASE
+    ):
         return (
             "An API is a defined way for software systems to communicate. It specifies "
             "what requests can be made, what inputs are expected, and what responses "
@@ -2851,7 +2928,9 @@ def _with_raw_user_message(
     if not thoughts:
         return (message,)
     normalized_message = _normalize_evidence_text(message)
-    if any(_normalize_evidence_text(thought) == normalized_message for thought in thoughts):
+    if any(
+        _normalize_evidence_text(thought) == normalized_message for thought in thoughts
+    ):
         return thoughts
     return (*thoughts, message)
 
@@ -3007,7 +3086,10 @@ def _clean_safety_note(
     cleaned = _clean_plan_text(safety_note)
     if not cleaned:
         return None
-    if "no safety risk" in cleaned.casefold() or "no risk indicated" in cleaned.casefold():
+    if (
+        "no safety risk" in cleaned.casefold()
+        or "no risk indicated" in cleaned.casefold()
+    ):
         return None
     if not _kernel_has_pattern(kernel_snapshot, "safety_risk"):
         return None
@@ -3089,8 +3171,7 @@ def _limit_question_marks(text: str) -> str:
 
 def _kernel_has_pattern(kernel_snapshot: dict[str, Any], pattern: str) -> bool:
     return any(
-        item.get("pattern") == pattern
-        for item in kernel_snapshot.get("hypotheses", [])
+        item.get("pattern") == pattern for item in kernel_snapshot.get("hypotheses", [])
     )
 
 
@@ -3228,13 +3309,22 @@ def _infer_challenges(text: str) -> tuple[str, ...]:
     challenges = []
     if re.search(r"\b(avoid|avoiding|procrastinat\w*|putting off|put off)\b", lowered):
         challenges.append("avoidance or procrastination")
-    if re.search(r"\b(stuck|blocked|hard to start|can't get myself|cannot get myself)\b", lowered):
+    if re.search(
+        r"\b(stuck|blocked|hard to start|can't get myself|cannot get myself)\b", lowered
+    ):
         challenges.append("difficulty starting")
-    if re.search(r"\b(not cut out|incompetent|not capable|can't do this|cannot do this)\b", lowered):
+    if re.search(
+        r"\b(not cut out|incompetent|not capable|can't do this|cannot do this)\b",
+        lowered,
+    ):
         challenges.append("self-efficacy doubt")
-    if re.search(r"\b(uncertain|don't know|do not know|can't decide|cannot decide)\b", lowered):
+    if re.search(
+        r"\b(uncertain|don't know|do not know|can't decide|cannot decide)\b", lowered
+    ):
         challenges.append("uncertainty")
-    if re.search(r"\b(distracted|can't focus|cannot focus|notifications|phone)\b", lowered):
+    if re.search(
+        r"\b(distracted|can't focus|cannot focus|notifications|phone)\b", lowered
+    ):
         challenges.append("attention or environment friction")
     return _unique_texts(challenges)
 
@@ -3278,9 +3368,13 @@ def _infer_projects(
 def _infer_key_results(text: str) -> tuple[str, ...]:
     lowered = text.casefold()
     key_results = []
-    if re.search(r"\b(key result|kr|metric|measure|measured by|success looks like)\b", lowered):
+    if re.search(
+        r"\b(key result|kr|metric|measure|measured by|success looks like)\b", lowered
+    ):
         key_results.append("define measurable progress")
-    if re.search(r"\b(reduce|increase|complete|finish|ship|send|publish|deliver)\b", lowered):
+    if re.search(
+        r"\b(reduce|increase|complete|finish|ship|send|publish|deliver)\b", lowered
+    ):
         key_results.append("observable completion or progress")
     if re.search(r"\b(\d+%|\d+ percent|\d+ times?|\d+ days?|\d+ weeks?)\b", lowered):
         key_results.append("numeric progress target")
@@ -3293,7 +3387,9 @@ def _infer_next_actions(
 ) -> tuple[str, ...]:
     lowered = text.casefold()
     actions = []
-    if re.search(r"\b(open|start|draft|write|send|schedule|call|email|text|review)\b", lowered):
+    if re.search(
+        r"\b(open|start|draft|write|send|schedule|call|email|text|review)\b", lowered
+    ):
         if "investor update" in lowered:
             actions.append("open or draft the investor update")
         elif "prototype" in lowered:
@@ -3313,11 +3409,18 @@ def _infer_obstacles(
 ) -> tuple[str, ...]:
     lowered = text.casefold()
     obstacles = list(challenges)
-    if re.search(r"\b(if|because).{0,80}\b(fail|bad|weak|judge|incompetent|not cut out)\b", lowered):
+    if re.search(
+        r"\b(if|because).{0,80}\b(fail|bad|weak|judge|incompetent|not cut out)\b",
+        lowered,
+    ):
         obstacles.append("fear of what the result might mean")
-    if re.search(r"\b(tired|exhausted|no energy|after work|too busy|overloaded)\b", lowered):
+    if re.search(
+        r"\b(tired|exhausted|no energy|after work|too busy|overloaded)\b", lowered
+    ):
         obstacles.append("low energy or overload")
-    if re.search(r"\b(distracted|notifications|phone|environment|interruptions)\b", lowered):
+    if re.search(
+        r"\b(distracted|notifications|phone|environment|interruptions)\b", lowered
+    ):
         obstacles.append("attention friction")
     if re.search(r"\b(waiting for|blocked by|need .* from|until they)\b", lowered):
         obstacles.append("waiting on external input")
@@ -3372,13 +3475,17 @@ def _infer_success_measures(
 ) -> tuple[str, ...]:
     lowered = text.casefold()
     measures = list(key_results)
-    if re.search(r"\b(done when|success means|success looks like|measure|metric)\b", lowered):
+    if re.search(
+        r"\b(done when|success means|success looks like|measure|metric)\b", lowered
+    ):
         measures.append("observable success measure")
     if "investor update" in lowered:
         measures.append("investor update sent")
     if "prototype" in lowered:
         measures.append("prototype progress is visible")
-    if re.search(r"\b(send|sent|publish|published|ship|shipped|finish|finished)\b", lowered):
+    if re.search(
+        r"\b(send|sent|publish|published|ship|shipped|finish|finished)\b", lowered
+    ):
         measures.append("item completed or shipped")
     return _unique_texts(measures)
 
@@ -3388,9 +3495,15 @@ def _infer_stakes(text: str) -> tuple[str, ...]:
     stakes = []
     if re.search(r"\b(investor|fundraising|fundraise|board)\b", lowered):
         stakes.append("investor judgment")
-    if re.search(r"\b(judge me|judged|think i.?m|think i am|disappoint|approve|approval)\b", lowered):
+    if re.search(
+        r"\b(judge me|judged|think i.?m|think i am|disappoint|approve|approval)\b",
+        lowered,
+    ):
         stakes.append("how others see me")
-    if re.search(r"\b(not cut out|worthless|failure|i am a failure|i'm a failure|incompetent)\b", lowered):
+    if re.search(
+        r"\b(not cut out|worthless|failure|i am a failure|i'm a failure|incompetent)\b",
+        lowered,
+    ):
         stakes.append("self-worth or identity")
     if re.search(r"\b(fail|failure|succeed|success|weak numbers?)\b", lowered):
         stakes.append("success or failure")
@@ -3408,14 +3521,18 @@ def _infer_domains(text: str) -> tuple[str, ...]:
         lowered,
     ):
         domains.append("work")
-    if re.search(r"\b(investor|fundraising|fundraise|money|revenue|numbers?)\b", lowered):
+    if re.search(
+        r"\b(investor|fundraising|fundraise|money|revenue|numbers?)\b", lowered
+    ):
         domains.append("money")
     if re.search(
         r"\b(not cut out|worthless|failure|incompetent|self-worth|identity)\b",
         lowered,
     ):
         domains.append("identity")
-    if re.search(r"\b(friend|partner|family|relationship|conflict|boundary)\b", lowered):
+    if re.search(
+        r"\b(friend|partner|family|relationship|conflict|boundary)\b", lowered
+    ):
         domains.append("relationship")
     if re.search(r"\b(sleep|body|exercise|health|recovery)\b", lowered):
         domains.append("health")

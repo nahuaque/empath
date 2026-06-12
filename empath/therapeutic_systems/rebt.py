@@ -129,7 +129,10 @@ class REBTSystem(TherapeuticSystem):
 
     def score_bonus(self, intervention: str, patterns: set[str]) -> float:
         score = 0.0
-        if "self_downing" in patterns and intervention == "unconditional_self_acceptance":
+        if (
+            "self_downing" in patterns
+            and intervention == "unconditional_self_acceptance"
+        ):
             score += 1.25
         if "demandingness" in patterns and intervention == "preference_rewrite":
             score += 1.0
@@ -148,6 +151,9 @@ class REBTSystem(TherapeuticSystem):
             and intervention == "uncertainty_tolerance_practice"
         ):
             score += 1.25
-        if "failure_intolerance" in patterns and intervention == "failure_tolerance_reframe":
+        if (
+            "failure_intolerance" in patterns
+            and intervention == "failure_tolerance_reframe"
+        ):
             score += 1.25
         return score

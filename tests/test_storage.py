@@ -164,7 +164,9 @@ class SurrealStateBackendTests(unittest.TestCase):
                 {"workspace": "default/workspace-a"},
             )
 
-            self.assertEqual(["sadness", "validation"], [item["label"] for item in nodes])
+            self.assertEqual(
+                ["sadness", "validation"], [item["label"] for item in nodes]
+            )
             self.assertEqual("emotion:sadness", edges[0]["source_node_id"])
             self.assertEqual("intervention:validation", edges[0]["target_node_id"])
             self.assertEqual(["user", "assistant"], [item["role"] for item in messages])
@@ -302,14 +304,21 @@ class SurrealStateBackendTests(unittest.TestCase):
             )
 
             by_label = {item["label"]: item for item in nodes}
-            self.assertEqual("stale_singleton", by_label["archived"]["compaction_reason"])
-            self.assertEqual("protected_confirmed", by_label["confirmed"]["compaction_reason"])
+            self.assertEqual(
+                "stale_singleton", by_label["archived"]["compaction_reason"]
+            )
+            self.assertEqual(
+                "protected_confirmed", by_label["confirmed"]["compaction_reason"]
+            )
             self.assertEqual("current_turn", by_label["current"]["compaction_reason"])
             self.assertEqual("user_rejected", by_label["rejected"]["compaction_reason"])
             self.assertEqual("user_removed", by_label["removed"]["compaction_reason"])
             self.assertTrue(by_label["confirmed"]["protected_by_policy"])
             self.assertFalse(by_label["archived"]["active_in_map"])
-            self.assertEqual(["active", "hidden_endpoint"], [item["compaction_reason"] for item in edges])
+            self.assertEqual(
+                ["active", "hidden_endpoint"],
+                [item["compaction_reason"] for item in edges],
+            )
             self.assertEqual(2, summary["active_node_count"])
             self.assertEqual(3, summary["hidden_node_count"])
             self.assertEqual(1, summary["stale_singleton_count"])
