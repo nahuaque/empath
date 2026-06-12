@@ -139,6 +139,19 @@ class ApiSurfaceTests(unittest.TestCase):
         self.assertIn("displayRole", page.text)
         self.assertIn('source.addEventListener("formulation"', page.text)
         self.assertNotIn("position: fixed", page.text)
+        self.assertLess(page.text.index('id="mapTab"'), page.text.index('id="traceTab"'))
+        self.assertIn(
+            '<button class="side-tab active" id="mapTab" type="button" role="tab" aria-selected="true"',
+            page.text,
+        )
+        self.assertIn(
+            '<button class="side-tab" id="traceTab" type="button" role="tab" aria-selected="false"',
+            page.text,
+        )
+        self.assertIn(
+            '<section class="side-panel" id="tracePanel" role="tabpanel" aria-labelledby="traceTab" hidden>',
+            page.text,
+        )
 
     def test_post_chat_returns_response_and_trace(self):
         app = create_app(

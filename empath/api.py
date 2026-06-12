@@ -4129,16 +4129,10 @@ CHAT_APP_HTML = r"""<!doctype html>
         <span class="session-id" id="session"></span>
       </div>
       <div class="side-tabs" role="tablist" aria-label="Inspector views">
-        <button class="side-tab active" id="traceTab" type="button" role="tab" aria-selected="true" aria-controls="tracePanel">Trace</button>
-        <button class="side-tab" id="mapTab" type="button" role="tab" aria-selected="false" aria-controls="mapPanel">Working Map</button>
+        <button class="side-tab active" id="mapTab" type="button" role="tab" aria-selected="true" aria-controls="mapPanel">Working Map</button>
+        <button class="side-tab" id="traceTab" type="button" role="tab" aria-selected="false" aria-controls="tracePanel">Trace</button>
       </div>
-      <section class="side-panel" id="tracePanel" role="tabpanel" aria-labelledby="traceTab">
-        <div class="controls">
-          <label class="toggle"><input type="checkbox" id="trace" checked> Show trace</label>
-        </div>
-        <pre id="traceOut">{}</pre>
-      </section>
-      <section class="side-panel map-panel" id="mapPanel" role="tabpanel" aria-labelledby="mapTab" hidden>
+      <section class="side-panel map-panel" id="mapPanel" role="tabpanel" aria-labelledby="mapTab">
         <div class="map-head">
           <div>
             <h3>Working Map</h3>
@@ -4151,6 +4145,12 @@ CHAT_APP_HTML = r"""<!doctype html>
         </div>
         <section class="map-section policy-section" id="policySummary" hidden></section>
         <div class="map-list" id="formulationMap"></div>
+      </section>
+      <section class="side-panel" id="tracePanel" role="tabpanel" aria-labelledby="traceTab" hidden>
+        <div class="controls">
+          <label class="toggle"><input type="checkbox" id="trace" checked> Show trace</label>
+        </div>
+        <pre id="traceOut">{}</pre>
       </section>
     </aside>
   </div>
