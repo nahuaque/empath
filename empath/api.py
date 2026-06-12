@@ -88,6 +88,60 @@ class ChatRetryRequest(BaseModel):
     trace: bool = False
 
 
+class WorkspaceCreateRequest(BaseModel):
+    """Create a workspace for the current user."""
+
+    user_id: str = Field(default=DEFAULT_USER_ID, min_length=1, max_length=128)
+    workspace_id: str | None = Field(default=None, min_length=1, max_length=128)
+    title: str | None = Field(default=None, max_length=128)
+
+
+class WorkspaceRenameRequest(BaseModel):
+    """Rename a workspace display title."""
+
+    user_id: str = Field(default=DEFAULT_USER_ID, min_length=1, max_length=128)
+    workspace_id: str = Field(min_length=1, max_length=128)
+    conversation_id: str | None = Field(default=None, min_length=1, max_length=128)
+    session_id: str | None = Field(default=None, min_length=1, max_length=128)
+    title: str = Field(min_length=1, max_length=128)
+
+
+class WorkspaceDeleteRequest(BaseModel):
+    """Delete a workspace and choose the next active workspace."""
+
+    user_id: str = Field(default=DEFAULT_USER_ID, min_length=1, max_length=128)
+    workspace_id: str = Field(min_length=1, max_length=128)
+
+
+class ConversationCreateRequest(BaseModel):
+    """Create a conversation inside a workspace."""
+
+    user_id: str = Field(default=DEFAULT_USER_ID, min_length=1, max_length=128)
+    workspace_id: str = Field(default=DEFAULT_WORKSPACE_ID, min_length=1, max_length=128)
+    conversation_id: str | None = Field(default=None, min_length=1, max_length=128)
+    session_id: str | None = Field(default=None, min_length=1, max_length=128)
+    title: str | None = Field(default=None, max_length=128)
+
+
+class ConversationRenameRequest(BaseModel):
+    """Rename a conversation display title."""
+
+    user_id: str = Field(default=DEFAULT_USER_ID, min_length=1, max_length=128)
+    workspace_id: str = Field(default=DEFAULT_WORKSPACE_ID, min_length=1, max_length=128)
+    conversation_id: str = Field(min_length=1, max_length=128)
+    session_id: str | None = Field(default=None, min_length=1, max_length=128)
+    title: str = Field(min_length=1, max_length=128)
+
+
+class ConversationDeleteRequest(BaseModel):
+    """Delete a conversation and choose the next active conversation."""
+
+    user_id: str = Field(default=DEFAULT_USER_ID, min_length=1, max_length=128)
+    workspace_id: str = Field(default=DEFAULT_WORKSPACE_ID, min_length=1, max_length=128)
+    conversation_id: str = Field(min_length=1, max_length=128)
+    session_id: str | None = Field(default=None, min_length=1, max_length=128)
+
+
 class ChatMessage(BaseModel):
     """One visible transcript message."""
 
@@ -114,6 +168,16 @@ class ConversationSummary(BaseModel):
     active: bool = False
 
 
+class WorkspaceSummary(BaseModel):
+    """One workspace for the current user."""
+
+    workspace_id: str
+    title: str
+    conversation_count: int = 0
+    message_count: int = 0
+    active: bool = False
+
+
 class ChatSessionResponse(BaseModel):
     """Visible transcript state for one chat session."""
 
@@ -121,6 +185,7 @@ class ChatSessionResponse(BaseModel):
     user_id: str = DEFAULT_USER_ID
     workspace_id: str = DEFAULT_WORKSPACE_ID
     conversation_id: str
+    workspaces: tuple[WorkspaceSummary, ...] = Field(default_factory=tuple)
     conversations: tuple[ConversationSummary, ...] = Field(default_factory=tuple)
     messages: tuple[ChatMessage, ...]
     formulation: FormulationGraph = Field(default_factory=FormulationGraph)
@@ -147,6 +212,7 @@ class ChatResponse(BaseModel):
     workspace_id: str = DEFAULT_WORKSPACE_ID
     conversation_id: str
     response: str
+    workspaces: tuple[WorkspaceSummary, ...] = Field(default_factory=tuple)
     conversations: tuple[ConversationSummary, ...] = Field(default_factory=tuple)
     messages: tuple[ChatMessage, ...] = Field(default_factory=tuple)
     trace: dict[str, Any] | None = None
@@ -245,11 +311,21 @@ class ChatRetryError(RuntimeError):
         self.status_code = status_code
 
 
+class ScopeMutationError(RuntimeError):
+    """User-facing workspace/conversation mutation error."""
+
+    def __init__(self, detail: str, *, status_code: int = 400) -> None:
+        super().__init__(detail)
+        self.detail = detail
+        self.status_code = status_code
+
+
 @dataclass
 class ChatConversation:
     """Conversation-scoped chat state."""
 
     coach: Any
+    title: str | None = None
     created_order: int = 0
     updated_order: int = 0
     history: list[ModelMessage] | None = None
@@ -262,6 +338,7 @@ class ChatConversation:
 class ChatWorkspace:
     """Workspace-scoped memory shared by its conversations."""
 
+    title: str | None = None
     memory: CaseMemory = field(default_factory=CaseMemory)
     experiments: ExperimentStore = field(default_factory=ExperimentStore)
     policy: PolicyMemory = field(default_factory=PolicyMemory)
@@ -281,6 +358,7 @@ class ChatScope:
     user_id: str
     workspace_id: str
     conversation_id: str
+    workspaces: dict[str, ChatWorkspace]
     workspace: ChatWorkspace
     conversation: ChatConversation
 
@@ -297,6 +375,7 @@ class WorkspaceScope:
 
     user_id: str
     workspace_id: str
+    workspaces: dict[str, ChatWorkspace]
     workspace: ChatWorkspace
 
 
@@ -344,6 +423,7 @@ class ChatSessionStore:
             return WorkspaceScope(
                 user_id=resolved_user_id,
                 workspace_id=resolved_workspace_id,
+                workspaces=workspaces,
                 workspace=workspace,
             )
 
@@ -405,9 +485,243 @@ class ChatSessionStore:
                 user_id=resolved_user_id,
                 workspace_id=resolved_workspace_id,
                 conversation_id=resolved_conversation_id,
+                workspaces=workspaces,
                 workspace=workspace,
                 conversation=conversation,
             )
+
+    async def create_workspace(
+        self,
+        *,
+        user_id: str | None = None,
+        workspace_id: str | None = None,
+        title: str | None = None,
+    ) -> WorkspaceScope:
+        resolved_user_id = _resolve_scope_id(user_id, DEFAULT_USER_ID)
+        requested_workspace_id = _resolve_scope_id(workspace_id, "")
+        async with self._lock:
+            await self._ensure_loaded_locked()
+            workspaces = self._users.setdefault(resolved_user_id, {})
+            resolved_workspace_id = requested_workspace_id or _new_scope_id(
+                "workspace",
+                workspaces,
+            )
+            if resolved_workspace_id in workspaces:
+                raise ScopeMutationError("Workspace already exists.", status_code=409)
+            workspace = ChatWorkspace(title=_clean_scope_title(title))
+            workspaces[resolved_workspace_id] = workspace
+            return WorkspaceScope(
+                user_id=resolved_user_id,
+                workspace_id=resolved_workspace_id,
+                workspaces=workspaces,
+                workspace=workspace,
+            )
+
+    async def rename_workspace(
+        self,
+        *,
+        user_id: str | None = None,
+        workspace_id: str | None = None,
+        title: str | None = None,
+    ) -> WorkspaceScope:
+        resolved_user_id = _resolve_scope_id(user_id, DEFAULT_USER_ID)
+        resolved_workspace_id = _resolve_scope_id(workspace_id, DEFAULT_WORKSPACE_ID)
+        cleaned_title = _clean_scope_title(title)
+        if not cleaned_title:
+            raise ScopeMutationError("Workspace title is required.", status_code=422)
+        async with self._lock:
+            await self._ensure_loaded_locked()
+            workspaces = self._users.setdefault(resolved_user_id, {})
+            workspace = workspaces.get(resolved_workspace_id)
+            if workspace is None:
+                raise ScopeMutationError("Workspace not found.", status_code=404)
+            workspace.title = cleaned_title
+            return WorkspaceScope(
+                user_id=resolved_user_id,
+                workspace_id=resolved_workspace_id,
+                workspaces=workspaces,
+                workspace=workspace,
+            )
+
+    async def delete_workspace(
+        self,
+        *,
+        user_id: str | None = None,
+        workspace_id: str | None = None,
+    ) -> ChatScope:
+        resolved_user_id = _resolve_scope_id(user_id, DEFAULT_USER_ID)
+        resolved_workspace_id = _resolve_scope_id(workspace_id, DEFAULT_WORKSPACE_ID)
+        async with self._lock:
+            await self._ensure_loaded_locked()
+            workspaces = self._users.setdefault(resolved_user_id, {})
+            if resolved_workspace_id not in workspaces:
+                raise ScopeMutationError("Workspace not found.", status_code=404)
+            del workspaces[resolved_workspace_id]
+            next_workspace_id = _latest_workspace_id(workspaces) or DEFAULT_WORKSPACE_ID
+            workspace = workspaces.get(next_workspace_id)
+            if workspace is None:
+                workspace = ChatWorkspace(title="Default")
+                workspaces[next_workspace_id] = workspace
+            conversation_id = (
+                _latest_conversation_id(workspace, require_messages=True)
+                or _latest_conversation_id(workspace)
+                or _new_scope_id("conversation", workspace.conversations)
+            )
+            conversation = workspace.conversations.get(conversation_id)
+            if conversation is None:
+                conversation = self._create_conversation_locked(
+                    workspace,
+                    conversation_id=conversation_id,
+                )
+            return ChatScope(
+                user_id=resolved_user_id,
+                workspace_id=next_workspace_id,
+                conversation_id=conversation_id,
+                workspaces=workspaces,
+                workspace=workspace,
+                conversation=conversation,
+            )
+
+    async def create_conversation(
+        self,
+        *,
+        user_id: str | None = None,
+        workspace_id: str | None = None,
+        conversation_id: str | None = None,
+        session_id: str | None = None,
+        title: str | None = None,
+    ) -> ChatScope:
+        resolved_user_id = _resolve_scope_id(user_id, DEFAULT_USER_ID)
+        resolved_workspace_id = _resolve_scope_id(workspace_id, DEFAULT_WORKSPACE_ID)
+        requested_conversation_id = _resolve_scope_id(conversation_id or session_id, "")
+        async with self._lock:
+            await self._ensure_loaded_locked()
+            workspaces = self._users.setdefault(resolved_user_id, {})
+            workspace = workspaces.get(resolved_workspace_id)
+            if workspace is None:
+                workspace = ChatWorkspace()
+                workspaces[resolved_workspace_id] = workspace
+            resolved_conversation_id = requested_conversation_id or _new_scope_id(
+                "conversation",
+                workspace.conversations,
+            )
+            if resolved_conversation_id in workspace.conversations:
+                raise ScopeMutationError("Conversation already exists.", status_code=409)
+            conversation = self._create_conversation_locked(
+                workspace,
+                conversation_id=resolved_conversation_id,
+                title=title,
+            )
+            return ChatScope(
+                user_id=resolved_user_id,
+                workspace_id=resolved_workspace_id,
+                conversation_id=resolved_conversation_id,
+                workspaces=workspaces,
+                workspace=workspace,
+                conversation=conversation,
+            )
+
+    async def rename_conversation(
+        self,
+        *,
+        user_id: str | None = None,
+        workspace_id: str | None = None,
+        conversation_id: str | None = None,
+        session_id: str | None = None,
+        title: str | None = None,
+    ) -> ChatScope:
+        resolved_user_id = _resolve_scope_id(user_id, DEFAULT_USER_ID)
+        resolved_workspace_id = _resolve_scope_id(workspace_id, DEFAULT_WORKSPACE_ID)
+        resolved_conversation_id = _resolve_scope_id(
+            conversation_id or session_id,
+            "",
+        )
+        cleaned_title = _clean_scope_title(title)
+        if not resolved_conversation_id:
+            raise ScopeMutationError("Conversation id is required.", status_code=422)
+        if not cleaned_title:
+            raise ScopeMutationError("Conversation title is required.", status_code=422)
+        async with self._lock:
+            await self._ensure_loaded_locked()
+            workspaces = self._users.setdefault(resolved_user_id, {})
+            workspace = workspaces.get(resolved_workspace_id)
+            if workspace is None:
+                raise ScopeMutationError("Workspace not found.", status_code=404)
+            conversation = workspace.conversations.get(resolved_conversation_id)
+            if conversation is None:
+                raise ScopeMutationError("Conversation not found.", status_code=404)
+            conversation.title = cleaned_title
+            return ChatScope(
+                user_id=resolved_user_id,
+                workspace_id=resolved_workspace_id,
+                conversation_id=resolved_conversation_id,
+                workspaces=workspaces,
+                workspace=workspace,
+                conversation=conversation,
+            )
+
+    async def delete_conversation(
+        self,
+        *,
+        user_id: str | None = None,
+        workspace_id: str | None = None,
+        conversation_id: str | None = None,
+        session_id: str | None = None,
+    ) -> ChatScope:
+        resolved_user_id = _resolve_scope_id(user_id, DEFAULT_USER_ID)
+        resolved_workspace_id = _resolve_scope_id(workspace_id, DEFAULT_WORKSPACE_ID)
+        resolved_conversation_id = _resolve_scope_id(
+            conversation_id or session_id,
+            "",
+        )
+        if not resolved_conversation_id:
+            raise ScopeMutationError("Conversation id is required.", status_code=422)
+        async with self._lock:
+            await self._ensure_loaded_locked()
+            workspaces = self._users.setdefault(resolved_user_id, {})
+            workspace = workspaces.get(resolved_workspace_id)
+            if workspace is None:
+                raise ScopeMutationError("Workspace not found.", status_code=404)
+            if resolved_conversation_id not in workspace.conversations:
+                raise ScopeMutationError("Conversation not found.", status_code=404)
+            del workspace.conversations[resolved_conversation_id]
+            _rebuild_workspace_derived_state(workspace)
+            next_conversation_id = (
+                _latest_conversation_id(workspace, require_messages=True)
+                or _latest_conversation_id(workspace)
+                or _new_scope_id("conversation", workspace.conversations)
+            )
+            conversation = workspace.conversations.get(next_conversation_id)
+            if conversation is None:
+                conversation = self._create_conversation_locked(
+                    workspace,
+                    conversation_id=next_conversation_id,
+                )
+            return ChatScope(
+                user_id=resolved_user_id,
+                workspace_id=resolved_workspace_id,
+                conversation_id=next_conversation_id,
+                workspaces=workspaces,
+                workspace=workspace,
+                conversation=conversation,
+            )
+
+    def _create_conversation_locked(
+        self,
+        workspace: ChatWorkspace,
+        *,
+        conversation_id: str,
+        title: str | None = None,
+    ) -> ChatConversation:
+        workspace.activity_counter += 1
+        conversation = ChatConversation(
+            coach=self._coach_factory(),
+            title=_clean_scope_title(title),
+            created_order=workspace.activity_counter,
+            updated_order=workspace.activity_counter,
+        )
+        workspace.conversations[conversation_id] = conversation
+        return conversation
 
     async def save(self) -> None:
         """Persist the visible app state when a backend is configured."""
@@ -514,7 +828,7 @@ class ChatSessionStore:
         return loaded_users
 
     def _restore_workspace(self, data: dict[str, Any]) -> ChatWorkspace:
-        workspace = ChatWorkspace()
+        workspace = ChatWorkspace(title=_clean_scope_title(data.get("title")))
         workspace.activity_counter = int(data.get("activity_counter") or 0)
         if memory_data := data.get("memory"):
             workspace.memory.import_state(memory_data)
@@ -551,6 +865,7 @@ class ChatSessionStore:
                 continue
         return ChatConversation(
             coach=self._coach_factory(),
+            title=_clean_scope_title(data.get("title")),
             created_order=int(data.get("created_order") or 0),
             updated_order=int(data.get("updated_order") or 0),
             transcript=transcript,
@@ -572,6 +887,7 @@ class ChatSessionStore:
 
     def _dump_workspace(self, workspace: ChatWorkspace) -> dict[str, Any]:
         return {
+            "title": workspace.title,
             "activity_counter": workspace.activity_counter,
             "memory": workspace.memory.export_state(),
             "experiments": workspace.experiments.export_state(),
@@ -584,6 +900,7 @@ class ChatSessionStore:
 
     def _dump_conversation(self, conversation: ChatConversation) -> dict[str, Any]:
         return {
+            "title": conversation.title,
             "created_order": conversation.created_order,
             "updated_order": conversation.updated_order,
             "transcript": [
@@ -826,6 +1143,133 @@ def create_app(
         except ValueError as exc:
             return JSONResponse({"detail": str(exc)}, status_code=422)
         scope = await store.get_conversation(**params)
+        await store.save()
+        return JSONResponse(_session_payload(scope))
+
+    async def workspaces_api(request: Request) -> JSONResponse:
+        if request.method == "GET":
+            try:
+                params = _query_workspace_scope(request)
+            except ValueError as exc:
+                return JSONResponse({"detail": str(exc)}, status_code=422)
+            workspace_scope = await store.get_workspace(**params)
+            await store.save()
+            return JSONResponse(
+                {
+                    "user_id": workspace_scope.user_id,
+                    "workspace_id": workspace_scope.workspace_id,
+                    "workspaces": [
+                        item.model_dump()
+                        for item in _workspace_summaries(workspace_scope)
+                    ],
+                }
+            )
+
+        try:
+            if request.method == "POST":
+                payload = WorkspaceCreateRequest.model_validate(await request.json())
+                workspace_scope = await store.create_workspace(
+                    user_id=payload.user_id,
+                    workspace_id=payload.workspace_id,
+                    title=payload.title,
+                )
+                scope = await store.get_conversation(
+                    user_id=workspace_scope.user_id,
+                    workspace_id=workspace_scope.workspace_id,
+                )
+            elif request.method == "PATCH":
+                payload = WorkspaceRenameRequest.model_validate(await request.json())
+                await store.rename_workspace(
+                    user_id=payload.user_id,
+                    workspace_id=payload.workspace_id,
+                    title=payload.title,
+                )
+                scope = await store.get_conversation(
+                    user_id=payload.user_id,
+                    workspace_id=payload.workspace_id,
+                    conversation_id=payload.conversation_id,
+                    session_id=payload.session_id,
+                    prefer_existing=True,
+                )
+            elif request.method == "DELETE":
+                payload = WorkspaceDeleteRequest.model_validate(await request.json())
+                scope = await store.delete_workspace(
+                    user_id=payload.user_id,
+                    workspace_id=payload.workspace_id,
+                )
+            else:
+                return JSONResponse({"detail": "Unsupported method."}, status_code=405)
+        except ValidationError as exc:
+            return JSONResponse({"detail": exc.errors()}, status_code=422)
+        except json.JSONDecodeError:
+            return JSONResponse({"detail": "Invalid JSON body."}, status_code=400)
+        except ScopeMutationError as exc:
+            return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+
+        await store.save()
+        return JSONResponse(_session_payload(scope))
+
+    async def conversations_api(request: Request) -> JSONResponse:
+        if request.method == "GET":
+            try:
+                params = _query_conversation_scope(request)
+            except ValueError as exc:
+                return JSONResponse({"detail": str(exc)}, status_code=422)
+            scope = await store.get_conversation(**params)
+            await store.save()
+            return JSONResponse(
+                {
+                    "session_id": scope.session_id,
+                    "user_id": scope.user_id,
+                    "workspace_id": scope.workspace_id,
+                    "conversation_id": scope.conversation_id,
+                    "workspaces": [
+                        item.model_dump()
+                        for item in _workspace_summaries(scope)
+                    ],
+                    "conversations": [
+                        item.model_dump()
+                        for item in _conversation_summaries(scope)
+                    ],
+                }
+            )
+
+        try:
+            if request.method == "POST":
+                payload = ConversationCreateRequest.model_validate(await request.json())
+                scope = await store.create_conversation(
+                    user_id=payload.user_id,
+                    workspace_id=payload.workspace_id,
+                    conversation_id=payload.conversation_id,
+                    session_id=payload.session_id,
+                    title=payload.title,
+                )
+            elif request.method == "PATCH":
+                payload = ConversationRenameRequest.model_validate(await request.json())
+                scope = await store.rename_conversation(
+                    user_id=payload.user_id,
+                    workspace_id=payload.workspace_id,
+                    conversation_id=payload.conversation_id,
+                    session_id=payload.session_id,
+                    title=payload.title,
+                )
+            elif request.method == "DELETE":
+                payload = ConversationDeleteRequest.model_validate(await request.json())
+                scope = await store.delete_conversation(
+                    user_id=payload.user_id,
+                    workspace_id=payload.workspace_id,
+                    conversation_id=payload.conversation_id,
+                    session_id=payload.session_id,
+                )
+            else:
+                return JSONResponse({"detail": "Unsupported method."}, status_code=405)
+        except ValidationError as exc:
+            return JSONResponse({"detail": exc.errors()}, status_code=422)
+        except json.JSONDecodeError:
+            return JSONResponse({"detail": "Invalid JSON body."}, status_code=400)
+        except ScopeMutationError as exc:
+            return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+
         await store.save()
         return JSONResponse(_session_payload(scope))
 
@@ -1089,6 +1533,10 @@ def create_app(
                     "user_id": scope.user_id,
                     "workspace_id": scope.workspace_id,
                     "conversation_id": scope.conversation_id,
+                    "workspaces": [
+                        item.model_dump()
+                        for item in _workspace_summaries(scope)
+                    ],
                 },
             )
             yield _sse("mode", route.model_dump())
@@ -1111,6 +1559,10 @@ def create_app(
                                 "text": info_record.text,
                                 "message": info_record.model_dump(exclude_none=True),
                                 "policy": scope.workspace.policy.summary(),
+                                "workspaces": [
+                                    item.model_dump()
+                                    for item in _workspace_summaries(scope)
+                                ],
                                 "conversations": [
                                     item.model_dump()
                                     for item in _conversation_summaries(scope)
@@ -1144,6 +1596,10 @@ def create_app(
                                 "text": reflection_record.text,
                                 "message": reflection_record.model_dump(exclude_none=True),
                                 "policy": scope.workspace.policy.summary(),
+                                "workspaces": [
+                                    item.model_dump()
+                                    for item in _workspace_summaries(scope)
+                                ],
                                 "conversations": [
                                     item.model_dump()
                                     for item in _conversation_summaries(scope)
@@ -1240,6 +1696,10 @@ def create_app(
                         "text": turn.text,
                         "message": assistant_record.model_dump(exclude_none=True),
                         "policy": scope.workspace.policy.summary(),
+                        "workspaces": [
+                            item.model_dump()
+                            for item in _workspace_summaries(scope)
+                        ],
                         "conversations": [
                             item.model_dump()
                             for item in _conversation_summaries(scope)
@@ -1273,6 +1733,16 @@ def create_app(
         routes=[
             Route("/", index, methods=["GET"]),
             Route("/api/health", health, methods=["GET"]),
+            Route(
+                "/api/workspaces",
+                workspaces_api,
+                methods=["GET", "POST", "PATCH", "DELETE"],
+            ),
+            Route(
+                "/api/conversations",
+                conversations_api,
+                methods=["GET", "POST", "PATCH", "DELETE"],
+            ),
             Route("/api/chat/session", chat_session, methods=["GET"]),
             Route("/api/chat/explain", explain_trace, methods=["GET"]),
             Route("/api/chat", chat_json, methods=["POST"]),
@@ -1535,6 +2005,7 @@ def _chat_response_payload(
         workspace_id=scope.workspace_id,
         conversation_id=scope.conversation_id,
         response=turn.text,
+        workspaces=_workspace_summaries(scope),
         conversations=_conversation_summaries(scope),
         messages=tuple(scope.conversation.transcript),
         trace=stored_trace if include_trace else None,
@@ -1557,6 +2028,7 @@ def _info_response_payload(
         workspace_id=scope.workspace_id,
         conversation_id=scope.conversation_id,
         response=message.text,
+        workspaces=_workspace_summaries(scope),
         conversations=_conversation_summaries(scope),
         messages=tuple(scope.conversation.transcript),
         formulation=scope.workspace.memory.snapshot(),
@@ -1572,6 +2044,7 @@ def _session_payload(scope: ChatScope) -> dict[str, Any]:
         user_id=scope.user_id,
         workspace_id=scope.workspace_id,
         conversation_id=scope.conversation_id,
+        workspaces=_workspace_summaries(scope),
         conversations=_conversation_summaries(scope),
         messages=tuple(scope.conversation.transcript),
         formulation=scope.workspace.memory.snapshot(),
@@ -1819,6 +2292,62 @@ def _conversation_summaries(scope: ChatScope) -> tuple[ConversationSummary, ...]
     return tuple(summaries)
 
 
+def _workspace_summaries(
+    scope: ChatScope | WorkspaceScope,
+) -> tuple[WorkspaceSummary, ...]:
+    summaries = [
+        _workspace_summary(
+            workspace_id=workspace_id,
+            workspace=workspace,
+            active=workspace_id == scope.workspace_id,
+        )
+        for workspace_id, workspace in scope.workspaces.items()
+    ]
+    summaries.sort(
+        key=lambda item: (
+            not item.active,
+            -scope.workspaces[item.workspace_id].activity_counter,
+            item.title.casefold(),
+            item.workspace_id,
+        )
+    )
+    return tuple(summaries)
+
+
+def _workspace_summary(
+    *,
+    workspace_id: str,
+    workspace: ChatWorkspace,
+    active: bool,
+) -> WorkspaceSummary:
+    conversations = tuple(workspace.conversations.values())
+    return WorkspaceSummary(
+        workspace_id=workspace_id,
+        title=workspace.title or _workspace_title(workspace_id),
+        conversation_count=len(conversations),
+        message_count=sum(len(conversation.transcript) for conversation in conversations),
+        active=active,
+    )
+
+
+def _workspace_title(workspace_id: str) -> str:
+    if workspace_id == DEFAULT_WORKSPACE_ID:
+        return "Default"
+    return _compact_preview(workspace_id, limit=44)
+
+
+def _latest_workspace_id(workspaces: dict[str, ChatWorkspace]) -> str | None:
+    if not workspaces:
+        return None
+    return max(
+        workspaces.items(),
+        key=lambda item: (
+            item[1].activity_counter,
+            item[0],
+        ),
+    )[0]
+
+
 def _latest_conversation_id(
     workspace: ChatWorkspace,
     *,
@@ -1860,6 +2389,8 @@ def _conversation_summary(
 
 
 def _conversation_title(conversation_id: str, conversation: ChatConversation) -> str:
+    if conversation.title:
+        return conversation.title
     for message in conversation.transcript:
         if message.role == "user":
             return _compact_preview(message.text, limit=44)
@@ -2169,6 +2700,20 @@ def _format_memory_packet_context(packet: dict[str, Any]) -> str:
 def _resolve_scope_id(value: str | None, default: str) -> str:
     cleaned = str(value or "").strip()
     return cleaned or default
+
+
+def _new_scope_id(prefix: str, existing: dict[str, Any]) -> str:
+    while True:
+        candidate = f"{prefix}-{secrets.token_urlsafe(6)}"
+        if candidate not in existing:
+            return candidate
+
+
+def _clean_scope_title(value: Any) -> str | None:
+    cleaned = re.sub(r"\s+", " ", str(value or "")).strip()
+    if not cleaned:
+        return None
+    return cleaned[:128]
 
 
 def _query_conversation_scope(request: Request) -> dict[str, str | None | bool]:
@@ -3305,22 +3850,13 @@ CHAT_APP_HTML = r"""<!doctype html>
       font-size: 12px;
       white-space: nowrap;
     }
-    .workspace-input {
-      width: 148px;
-      height: 34px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 0 9px;
-      color: var(--ink);
-      background: #fff;
-      font: inherit;
-      font-size: 13px;
-      outline: none;
+    .scope-menu {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
     }
-    .workspace-input:focus {
-      border-color: var(--accent);
-      box-shadow: 0 0 0 3px rgba(22, 106, 91, 0.12);
-    }
+    .workspace-select,
     .conversation-select {
       width: 210px;
       height: 34px;
@@ -3333,6 +3869,10 @@ CHAT_APP_HTML = r"""<!doctype html>
       font-size: 13px;
       outline: none;
     }
+    .workspace-select {
+      width: 170px;
+    }
+    .workspace-select:focus,
     .conversation-select:focus {
       border-color: var(--accent);
       box-shadow: 0 0 0 3px rgba(22, 106, 91, 0.12);
@@ -3344,6 +3884,11 @@ CHAT_APP_HTML = r"""<!doctype html>
       padding: 0 10px;
       font-size: 12px;
       font-weight: 720;
+    }
+    button.scope-button.danger {
+      border-color: #d7b4b4;
+      color: #7f3434;
+      background: #fff7f7;
     }
     .messages {
       min-height: 0;
@@ -4087,7 +4632,7 @@ CHAT_APP_HTML = r"""<!doctype html>
       button { width: 100%; }
       button.icon-button { width: 38px; }
       button.scope-button { width: auto; }
-      .workspace-input { width: 130px; }
+      .workspace-select { width: 150px; }
       .conversation-select { width: 180px; }
       .why-chip { width: auto; }
       button.experiment-action { width: auto; }
@@ -4105,16 +4650,24 @@ CHAT_APP_HTML = r"""<!doctype html>
           <div class="status" id="status">Ready</div>
         </div>
         <div class="header-actions">
-          <label class="scope-control" for="workspaceInput">
+          <label class="scope-control" for="workspaceSelect">
             <span>Workspace</span>
-            <input class="workspace-input" id="workspaceInput" type="text" maxlength="128" autocomplete="off">
+            <select class="workspace-select" id="workspaceSelect"></select>
           </label>
+          <div class="scope-menu" aria-label="Workspace actions">
+            <button class="scope-button" id="newWorkspace" type="button">New</button>
+            <button class="scope-button" id="renameWorkspace" type="button">Rename</button>
+            <button class="scope-button danger" id="deleteWorkspace" type="button">Delete</button>
+          </div>
           <label class="scope-control" for="conversationSelect">
             <span>Conversation</span>
             <select class="conversation-select" id="conversationSelect"></select>
           </label>
-          <button class="scope-button" id="newWorkspace" type="button">New workspace</button>
-          <button class="icon-button" id="newChat" type="button" title="New conversation" aria-label="New conversation">+</button>
+          <div class="scope-menu" aria-label="Conversation actions">
+            <button class="scope-button" id="newChat" type="button">New</button>
+            <button class="scope-button" id="renameChat" type="button">Rename</button>
+            <button class="scope-button danger" id="deleteChat" type="button">Delete</button>
+          </div>
         </div>
       </header>
       <section class="messages" id="messages" aria-live="polite"></section>
@@ -4195,8 +4748,12 @@ CHAT_APP_HTML = r"""<!doctype html>
     const input = document.getElementById("message");
     const send = document.getElementById("send");
     const newChat = document.getElementById("newChat");
+    const renameChat = document.getElementById("renameChat");
+    const deleteChat = document.getElementById("deleteChat");
     const newWorkspace = document.getElementById("newWorkspace");
-    const workspaceInput = document.getElementById("workspaceInput");
+    const renameWorkspace = document.getElementById("renameWorkspace");
+    const deleteWorkspace = document.getElementById("deleteWorkspace");
+    const workspaceSelect = document.getElementById("workspaceSelect");
     const conversationSelect = document.getElementById("conversationSelect");
     const statusEl = document.getElementById("status");
     const traceToggle = document.getElementById("trace");
@@ -4246,7 +4803,34 @@ CHAT_APP_HTML = r"""<!doctype html>
     function renderSessionLabel() {
       const conversationLabel = sessionId ? sessionId.slice(0, 8) : "select";
       sessionLabel.textContent = `${workspaceId.slice(0, 16)} / ${conversationLabel}`;
-      workspaceInput.value = workspaceId;
+    }
+
+    function renderWorkspaces(workspaces = []) {
+      const existing = new Set();
+      workspaceSelect.textContent = "";
+      for (const workspace of workspaces) {
+        const id = workspace.workspace_id;
+        if (!id || existing.has(id)) continue;
+        existing.add(id);
+        const option = document.createElement("option");
+        option.value = id;
+        option.dataset.title = workspace.title || id;
+        const conversations = Number(workspace.conversation_count || 0);
+        const messages = Number(workspace.message_count || 0);
+        const suffix = conversations || messages
+          ? ` (${conversations} chats, ${messages} msgs)`
+          : "";
+        option.textContent = `${workspace.title || id}${suffix}`;
+        workspaceSelect.appendChild(option);
+      }
+      if (workspaceId && !existing.has(workspaceId)) {
+        const option = document.createElement("option");
+        option.value = workspaceId;
+        option.dataset.title = workspaceId;
+        option.textContent = workspaceId === "default" ? "Default" : workspaceId;
+        workspaceSelect.appendChild(option);
+      }
+      if (workspaceId) workspaceSelect.value = workspaceId;
     }
 
     function renderConversations(conversations = []) {
@@ -4258,6 +4842,7 @@ CHAT_APP_HTML = r"""<!doctype html>
         existing.add(id);
         const option = document.createElement("option");
         option.value = id;
+        option.dataset.title = conversation.title || `Conversation ${id.slice(0, 8)}`;
         const count = Number(conversation.message_count || 0);
         const suffix = count ? ` (${count})` : "";
         option.textContent = `${conversation.title || `Conversation ${id.slice(0, 8)}`}${suffix}`;
@@ -4266,6 +4851,7 @@ CHAT_APP_HTML = r"""<!doctype html>
       if (sessionId && !existing.has(sessionId)) {
         const option = document.createElement("option");
         option.value = sessionId;
+        option.dataset.title = `New conversation ${sessionId.slice(0, 8)}`;
         option.textContent = `New conversation ${sessionId.slice(0, 8)}`;
         conversationSelect.appendChild(option);
       }
@@ -5196,6 +5782,7 @@ CHAT_APP_HTML = r"""<!doctype html>
         persistSession();
         renderSessionLabel();
         updateProgress("rendering");
+        renderWorkspaces(data.workspaces || []);
         renderConversations(data.conversations || []);
         renderTranscript(data.messages || []);
         progressAnchor = latestUserWrap();
@@ -5340,45 +5927,88 @@ CHAT_APP_HTML = r"""<!doctype html>
         return;
       }
       const data = await response.json();
+      applySessionData(data);
+      setStatus("Ready");
+    }
+
+    function applySessionData(data, options = {}) {
+      const renderMessages = options.renderMessages !== false;
       userId = data.user_id || userId;
       workspaceId = data.workspace_id || workspaceId;
       sessionId = data.conversation_id || data.session_id || sessionId;
       persistSession();
       renderSessionLabel();
+      renderWorkspaces(data.workspaces || []);
       renderConversations(data.conversations || []);
-      renderTranscript(data.messages || []);
+      if (renderMessages) renderTranscript(data.messages || []);
       renderFormulation(data.formulation || { turn_count: 0, nodes: [], edges: [] });
       renderPolicy(data.policy || { empty: true });
-      setStatus("Ready");
     }
 
-    async function startNewChat() {
+    function closeActiveSource() {
       if (activeSource) {
         activeSource.close();
         activeSource = null;
       }
-      sessionId = crypto.randomUUID();
-      persistSession();
-      renderSessionLabel();
+    }
+
+    async function mutateScope(url, method, body, statusText) {
+      closeActiveSource();
+      setStatus(statusText || "Updating");
+      const response = await fetch(url, {
+        method,
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!response.ok) throw new Error(await responseErrorDetail(response));
+      const data = await response.json();
+      applySessionData(data);
+      traceOut.textContent = "{}";
+      resetProgress();
+      setStatus("Ready");
+      return data;
+    }
+
+    function selectedWorkspaceTitle() {
+      const selected = workspaceSelect.selectedOptions[0];
+      return selected?.dataset.title || selected?.textContent || workspaceId || "Workspace";
+    }
+
+    function selectedConversationTitle() {
+      const selected = conversationSelect.selectedOptions[0];
+      return selected?.dataset.title || selected?.textContent || sessionId || "Conversation";
+    }
+
+    async function startNewChat() {
+      const title = window.prompt("Name this conversation.", "");
+      if (title === null) return;
       renderTranscript([]);
       traceOut.textContent = "{}";
       send.disabled = false;
-      resetProgress();
-      renderPolicy(policyMemory);
-      await loadSession();
-      input.focus();
+      try {
+        await mutateScope(
+          "/api/conversations",
+          "POST",
+          {
+            user_id: userId,
+            workspace_id: workspaceId,
+            title: title.trim(),
+          },
+          "Creating conversation",
+        );
+        input.focus();
+      } catch (error) {
+        setStatus("Error");
+      }
     }
 
     async function switchWorkspace(nextWorkspaceId) {
       const cleaned = String(nextWorkspaceId || "").trim();
       if (!cleaned || cleaned === workspaceId) {
-        workspaceInput.value = workspaceId;
+        workspaceSelect.value = workspaceId;
         return;
       }
-      if (activeSource) {
-        activeSource.close();
-        activeSource = null;
-      }
+      closeActiveSource();
       workspaceId = cleaned.slice(0, 128);
       sessionId = "";
       persistSession();
@@ -5392,7 +6022,60 @@ CHAT_APP_HTML = r"""<!doctype html>
     }
 
     async function startNewWorkspace() {
-      await switchWorkspace(`workspace-${crypto.randomUUID().slice(0, 8)}`);
+      const title = window.prompt("Name this workspace.", "");
+      if (title === null) return;
+      renderTranscript([]);
+      traceOut.textContent = "{}";
+      try {
+        await mutateScope(
+          "/api/workspaces",
+          "POST",
+          {
+            user_id: userId,
+            title: title.trim(),
+          },
+          "Creating workspace",
+        );
+        input.focus();
+      } catch (error) {
+        setStatus("Error");
+      }
+    }
+
+    async function renameActiveWorkspace() {
+      const title = window.prompt("Rename workspace.", selectedWorkspaceTitle());
+      if (title === null) return;
+      const cleaned = title.trim();
+      if (!cleaned) return;
+      try {
+        await mutateScope(
+          "/api/workspaces",
+          "PATCH",
+          scopedBody({ title: cleaned }),
+          "Renaming workspace",
+        );
+      } catch (error) {
+        setStatus("Error");
+      }
+    }
+
+    async function deleteActiveWorkspace() {
+      const title = selectedWorkspaceTitle();
+      if (!confirm(`Delete workspace "${title}" and all of its conversations?`)) return;
+      try {
+        await mutateScope(
+          "/api/workspaces",
+          "DELETE",
+          {
+            user_id: userId,
+            workspace_id: workspaceId,
+          },
+          "Deleting workspace",
+        );
+        input.focus();
+      } catch (error) {
+        setStatus("Error");
+      }
     }
 
     async function switchConversation(nextConversationId) {
@@ -5401,10 +6084,7 @@ CHAT_APP_HTML = r"""<!doctype html>
         conversationSelect.value = sessionId;
         return;
       }
-      if (activeSource) {
-        activeSource.close();
-        activeSource = null;
-      }
+      closeActiveSource();
       sessionId = cleaned.slice(0, 128);
       persistSession();
       renderSessionLabel();
@@ -5414,6 +6094,41 @@ CHAT_APP_HTML = r"""<!doctype html>
       renderPolicy(policyMemory);
       await loadSession();
       input.focus();
+    }
+
+    async function renameActiveConversation() {
+      if (!sessionId) return;
+      const title = window.prompt("Rename conversation.", selectedConversationTitle());
+      if (title === null) return;
+      const cleaned = title.trim();
+      if (!cleaned) return;
+      try {
+        await mutateScope(
+          "/api/conversations",
+          "PATCH",
+          scopedBody({ title: cleaned }),
+          "Renaming conversation",
+        );
+      } catch (error) {
+        setStatus("Error");
+      }
+    }
+
+    async function deleteActiveConversation() {
+      if (!sessionId) return;
+      const title = selectedConversationTitle();
+      if (!confirm(`Delete conversation "${title}"?`)) return;
+      try {
+        await mutateScope(
+          "/api/conversations",
+          "DELETE",
+          scopedBody({}),
+          "Deleting conversation",
+        );
+        input.focus();
+      } catch (error) {
+        setStatus("Error");
+      }
     }
 
     function appendTrace(eventName, data) {
@@ -5429,15 +6144,13 @@ CHAT_APP_HTML = r"""<!doctype html>
     }
 
     newChat.addEventListener("click", startNewChat);
+    renameChat.addEventListener("click", renameActiveConversation);
+    deleteChat.addEventListener("click", deleteActiveConversation);
     newWorkspace.addEventListener("click", startNewWorkspace);
+    renameWorkspace.addEventListener("click", renameActiveWorkspace);
+    deleteWorkspace.addEventListener("click", deleteActiveWorkspace);
     conversationSelect.addEventListener("change", () => switchConversation(conversationSelect.value));
-    workspaceInput.addEventListener("change", () => switchWorkspace(workspaceInput.value));
-    workspaceInput.addEventListener("keydown", (event) => {
-      if (event.key === "Enter") {
-        event.preventDefault();
-        workspaceInput.blur();
-      }
-    });
+    workspaceSelect.addEventListener("change", () => switchWorkspace(workspaceSelect.value));
     traceTab.addEventListener("click", () => showInspector("trace"));
     mapTab.addEventListener("click", () => showInspector("map"));
     mirrorMap.addEventListener("click", requestReflectiveListening);
@@ -5516,6 +6229,7 @@ CHAT_APP_HTML = r"""<!doctype html>
         sessionId = data.conversation_id || data.session_id || sessionId;
         persistSession();
         renderSessionLabel();
+        renderWorkspaces(data.workspaces || []);
         renderConversations([{ conversation_id: sessionId, title: `Conversation ${sessionId.slice(0, 8)}`, active: true }]);
       });
       source.addEventListener("message", (event) => {
@@ -5550,6 +6264,7 @@ CHAT_APP_HTML = r"""<!doctype html>
         updateProgress("rendering");
         const message = data.message || { role: "assistant" };
         addMessage(displayRole(message), data.text, message);
+        if (data.workspaces) renderWorkspaces(data.workspaces);
         if (data.conversations) renderConversations(data.conversations);
         if (data.policy) renderPolicy(data.policy);
         setStatus("Ready");

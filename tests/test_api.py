@@ -60,6 +60,13 @@ class ApiSurfaceTests(unittest.TestCase):
         self.assertIn("EventSource", page.text)
         self.assertIn("loadSession", page.text)
         self.assertIn("newChat", page.text)
+        self.assertIn("workspaceSelect", page.text)
+        self.assertIn("renameWorkspace", page.text)
+        self.assertIn("deleteWorkspace", page.text)
+        self.assertIn("renameChat", page.text)
+        self.assertIn("deleteChat", page.text)
+        self.assertIn("/api/workspaces", page.text)
+        self.assertIn("/api/conversations", page.text)
         self.assertIn("Why this?", page.text)
         self.assertIn("/api/chat/explain", page.text)
         self.assertIn("progressToast", page.text)
@@ -605,6 +612,111 @@ class ApiSurfaceTests(unittest.TestCase):
         active = [item for item in conversations if item["active"]]
         self.assertEqual(["alpha"], [item["conversation_id"] for item in active])
         self.assertIn("sad", active[0]["title"])
+        workspaces = response.json()["workspaces"]
+        self.assertEqual(
+            ["conversation-list-workspace"],
+            [item["workspace_id"] for item in workspaces],
+        )
+
+    def test_workspace_crud_endpoints_return_refreshed_session(self):
+        app = create_app(
+            coach_factory=DeterministicKernelGuidedCoach,
+            dry_run=True,
+        )
+        client = TestClient(app)
+
+        created = client.post(
+            "/api/workspaces",
+            json={"title": "Founder coaching"},
+        )
+
+        self.assertEqual(200, created.status_code)
+        payload = created.json()
+        workspace_id = payload["workspace_id"]
+        self.assertTrue(workspace_id.startswith("workspace-"))
+        active = [item for item in payload["workspaces"] if item["active"]]
+        self.assertEqual(["Founder coaching"], [item["title"] for item in active])
+        self.assertEqual([], payload["messages"])
+        self.assertEqual(1, len(payload["conversations"]))
+
+        renamed = client.patch(
+            "/api/workspaces",
+            json={
+                "workspace_id": workspace_id,
+                "conversation_id": payload["conversation_id"],
+                "title": "Leadership lab",
+            },
+        )
+
+        self.assertEqual(200, renamed.status_code)
+        renamed_active = [item for item in renamed.json()["workspaces"] if item["active"]]
+        self.assertEqual(["Leadership lab"], [item["title"] for item in renamed_active])
+
+        deleted = client.request(
+            "DELETE",
+            "/api/workspaces",
+            json={"workspace_id": workspace_id},
+        )
+
+        self.assertEqual(200, deleted.status_code)
+        deleted_payload = deleted.json()
+        self.assertNotEqual(workspace_id, deleted_payload["workspace_id"])
+        self.assertNotIn(
+            workspace_id,
+            {item["workspace_id"] for item in deleted_payload["workspaces"]},
+        )
+
+    def test_conversation_crud_endpoints_return_refreshed_session(self):
+        app = create_app(
+            coach_factory=DeterministicKernelGuidedCoach,
+            dry_run=True,
+        )
+        client = TestClient(app)
+
+        created = client.post(
+            "/api/conversations",
+            json={
+                "workspace_id": "crud-workspace",
+                "title": "Investor update",
+            },
+        )
+
+        self.assertEqual(200, created.status_code)
+        payload = created.json()
+        conversation_id = payload["conversation_id"]
+        self.assertTrue(conversation_id.startswith("conversation-"))
+        active = [item for item in payload["conversations"] if item["active"]]
+        self.assertEqual(["Investor update"], [item["title"] for item in active])
+
+        renamed = client.patch(
+            "/api/conversations",
+            json={
+                "workspace_id": "crud-workspace",
+                "conversation_id": conversation_id,
+                "title": "Board prep",
+            },
+        )
+
+        self.assertEqual(200, renamed.status_code)
+        renamed_active = [item for item in renamed.json()["conversations"] if item["active"]]
+        self.assertEqual(["Board prep"], [item["title"] for item in renamed_active])
+
+        deleted = client.request(
+            "DELETE",
+            "/api/conversations",
+            json={
+                "workspace_id": "crud-workspace",
+                "conversation_id": conversation_id,
+            },
+        )
+
+        self.assertEqual(200, deleted.status_code)
+        deleted_payload = deleted.json()
+        self.assertNotEqual(conversation_id, deleted_payload["conversation_id"])
+        self.assertNotIn(
+            conversation_id,
+            {item["conversation_id"] for item in deleted_payload["conversations"]},
+        )
 
     def test_session_without_conversation_prefers_existing_workspace_conversation(self):
         app = create_app(
