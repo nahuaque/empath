@@ -46,8 +46,7 @@ Then edit `.env`:
 DEEPSEEK_API_KEY=your_key_here
 ```
 
-Empath also still supports `DEEPSEEK_API_KEY` from the process environment and
-the legacy `.deepseek_api_key` file.
+Empath also supports `DEEPSEEK_API_KEY` from the process environment.
 
 ## Run The Chat App
 

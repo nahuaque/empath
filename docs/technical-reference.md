@@ -175,8 +175,7 @@ Interactive debug commands:
 ## API Keys
 
 The CLI and API read the DeepSeek API key from `DEEPSEEK_API_KEY`, then from
-`.env`, then from the legacy `.deepseek_api_key` file. For local development,
-copy `.env.example` to `.env` and set:
+`.env`. For local development, copy `.env.example` to `.env` and set:
 
 ```bash
 DEEPSEEK_API_KEY=...

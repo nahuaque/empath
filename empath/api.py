@@ -23,9 +23,6 @@ from starlette.responses import HTMLResponse, JSONResponse, Response
 from starlette.routing import Route
 
 from .chat import (
-    DEFAULT_API_KEY_FILE,
-    DEFAULT_API_KEY_ENV_VAR,
-    DEFAULT_ENV_FILE,
     DEFAULT_MODEL,
     ChatTurnResult,
     CounterfactualIntervention,
@@ -1012,7 +1009,6 @@ def _default_surreal_url() -> str:
 def create_app(
     *,
     coach_factory: CoachFactory | None = None,
-    api_key_file: str | Path = DEFAULT_API_KEY_FILE,
     model_name: str = DEFAULT_MODEL,
     temperature: float = 0.4,
     max_tokens: int = 900,
@@ -1031,7 +1027,6 @@ def create_app(
 
     if coach_factory is None:
         coach_factory = _default_coach_factory(
-            api_key_file=api_key_file,
             model_name=model_name,
             temperature=temperature,
             max_tokens=max_tokens,
@@ -3695,7 +3690,6 @@ def _human_label(value: str) -> str:
 
 def _default_coach_factory(
     *,
-    api_key_file: str | Path,
     model_name: str,
     temperature: float,
     max_tokens: int,
@@ -3706,7 +3700,7 @@ def _default_coach_factory(
 
     def factory() -> KernelGuidedCoach:
         return KernelGuidedCoach(
-            api_key=read_api_key(Path(api_key_file)),
+            api_key=read_api_key(),
             model_name=model_name,
             temperature=temperature,
             max_tokens=max_tokens,
@@ -3749,15 +3743,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the Empath chat API and SSE app.")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
-    parser.add_argument(
-        "--api-key-file",
-        default=DEFAULT_API_KEY_FILE,
-        help=(
-            f"Legacy DeepSeek API key file fallback. Empath first reads "
-            f"{DEFAULT_API_KEY_ENV_VAR} from the environment or {DEFAULT_ENV_FILE}. "
-            f"Default: {DEFAULT_API_KEY_FILE}"
-        ),
-    )
     parser.add_argument(
         "--model",
         default=DEFAULT_MODEL,
@@ -3814,7 +3799,6 @@ def main(argv: list[str] | None = None) -> int:
 
     uvicorn.run(
         create_app(
-            api_key_file=args.api_key_file,
             model_name=args.model,
             temperature=args.temperature,
             max_tokens=args.max_tokens,

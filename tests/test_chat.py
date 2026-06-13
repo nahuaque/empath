@@ -69,19 +69,9 @@ class _FlakyAgent(_FakeAgent):
 
 
 class ChatWorkflowTests(unittest.TestCase):
-    def test_read_api_key_strips_whitespace(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "key"
-            env_file = Path(tmp) / ".env"
-            path.write_text("  secret-key\n", encoding="utf-8")
-            with patch.dict(os.environ, {}, clear=True):
-                self.assertEqual("secret-key", read_api_key(path, env_file=env_file))
-
     def test_read_api_key_prefers_environment_variable(self):
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "key"
             env_file = Path(tmp) / ".env"
-            path.write_text("legacy-key", encoding="utf-8")
             env_file.write_text(
                 f"{DEFAULT_API_KEY_ENV_VAR}=dotenv-key\n",
                 encoding="utf-8",
@@ -91,19 +81,24 @@ class ChatWorkflowTests(unittest.TestCase):
                 {DEFAULT_API_KEY_ENV_VAR: "  env-key\n"},
                 clear=True,
             ):
-                self.assertEqual("env-key", read_api_key(path, env_file=env_file))
+                self.assertEqual("env-key", read_api_key(env_file=env_file))
 
-    def test_read_api_key_reads_dotenv_before_legacy_file(self):
+    def test_read_api_key_reads_dotenv(self):
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "key"
             env_file = Path(tmp) / ".env"
-            path.write_text("legacy-key", encoding="utf-8")
             env_file.write_text(
                 f"export {DEFAULT_API_KEY_ENV_VAR}='dotenv-key' # local secret\n",
                 encoding="utf-8",
             )
             with patch.dict(os.environ, {}, clear=True):
-                self.assertEqual("dotenv-key", read_api_key(path, env_file=env_file))
+                self.assertEqual("dotenv-key", read_api_key(env_file=env_file))
+
+    def test_read_api_key_errors_without_environment_or_dotenv(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            env_file = Path(tmp) / ".env"
+            with patch.dict(os.environ, {}, clear=True):
+                with self.assertRaisesRegex(RuntimeError, "DeepSeek API key not found"):
+                    read_api_key(env_file=env_file)
 
     def test_message_preparation_feeds_kernel(self):
         kernel = TherapeuticReasoningKernel()

@@ -29,7 +29,6 @@ from .therapeutic_kernel import (
 DEFAULT_MODEL = "deepseek-v4-flash"
 DEFAULT_API_KEY_ENV_VAR = "DEEPSEEK_API_KEY"
 DEFAULT_ENV_FILE = ".env"
-DEFAULT_API_KEY_FILE = ".deepseek_api_key"
 DEFAULT_AGENT_RETRY_ATTEMPTS = 3
 DEFAULT_AGENT_RETRY_BACKOFF_SECONDS = 0.35
 CONSULTATIVE_INTERVENTIONS = frozenset(
@@ -1022,7 +1021,6 @@ def _looks_like_framework_explanation_request(message: str) -> bool:
 
 
 def read_api_key(
-    path: Path | None = None,
     *,
     env_file: Path | None = None,
     env_var: str = DEFAULT_API_KEY_ENV_VAR,
@@ -1042,18 +1040,10 @@ def read_api_key(
             return key
         raise RuntimeError(f"{env_var} is empty in {dotenv_path}.")
 
-    key_path = path or Path(DEFAULT_API_KEY_FILE)
-    try:
-        key = key_path.read_text(encoding="utf-8").strip()
-    except FileNotFoundError as exc:
-        raise RuntimeError(
-            f"DeepSeek API key not found. Set {env_var}, add {env_var}=... "
-            f"to {dotenv_path}, or create legacy key file {key_path}."
-        ) from exc
-
-    if not key:
-        raise RuntimeError(f"DeepSeek API key file is empty: {key_path}")
-    return key
+    raise RuntimeError(
+        f"DeepSeek API key not found. Set {env_var} or add {env_var}=... "
+        f"to {dotenv_path}."
+    )
 
 
 def _read_dotenv(path: Path) -> dict[str, str]:
@@ -2548,15 +2538,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         description="Run the DeepSeek-backed Empath chat CLI."
     )
     parser.add_argument(
-        "--api-key-file",
-        default=DEFAULT_API_KEY_FILE,
-        help=(
-            f"Legacy DeepSeek API key file fallback. Empath first reads "
-            f"{DEFAULT_API_KEY_ENV_VAR} from the environment or {DEFAULT_ENV_FILE}. "
-            f"Default: {DEFAULT_API_KEY_FILE}"
-        ),
-    )
-    parser.add_argument(
         "--model",
         default=DEFAULT_MODEL,
         help=f"DeepSeek model id. Default: {DEFAULT_MODEL}",
@@ -2657,7 +2638,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     try:
-        api_key = read_api_key(Path(args.api_key_file))
+        api_key = read_api_key()
         coach = KernelGuidedCoach(
             api_key=api_key,
             model_name=args.model,
