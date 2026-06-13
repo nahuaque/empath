@@ -27,8 +27,12 @@ class PolicyExperimentRecord(BaseModel):
     focus: str
     outcome: ExperimentFeedbackAction
     created_turn: int
+    pattern_keys: tuple[str, ...] = Field(default_factory=tuple)
+    usefulness: int | None = Field(default=None, ge=0, le=10)
     friction_before: int | None = None
     friction_after: int | None = None
+    emotional_shift: str | None = None
+    action_taken: str | None = None
     learning: str | None = None
     note: str | None = None
 
@@ -105,8 +109,12 @@ class PolicyMemory:
             focus=_clean_label(experiment.focus),
             outcome=experiment.outcome,
             created_turn=experiment.created_turn,
+            pattern_keys=tuple(_clean_label(item) for item in experiment.pattern_keys),
+            usefulness=experiment.usefulness,
             friction_before=experiment.friction_before,
             friction_after=experiment.friction_after,
+            emotional_shift=_clean_text(experiment.emotional_shift),
+            action_taken=_clean_text(experiment.action_taken),
             learning=_clean_text(experiment.learning),
             note=_clean_text(experiment.note),
         )
@@ -201,6 +209,11 @@ class PolicyMemory:
         lines = [
             "Treat these workspace feedback signals as tentative outcome evidence, not fixed rules:"
         ]
+        priors = summary.get("personalized_priors") or []
+        if priors:
+            lines.append("- Personalized outcome priors:")
+            for item in priors[:limit]:
+                lines.append(f"  - {item['description']}")
         helpful = summary.get("helpful") or []
         if helpful:
             lines.append("- Moves with positive feedback:")
@@ -229,6 +242,7 @@ class PolicyMemory:
 
         helpful = self._outcome_summary(positive=True)
         costly = self._outcome_summary(positive=False)
+        personalized_priors = self._personalized_priors()
         map_feedback = [
             {
                 "kind": item.kind,
@@ -239,7 +253,11 @@ class PolicyMemory:
             for item in self._formulation_records[-10:]
         ]
         return {
-            "empty": not helpful and not costly and not map_feedback,
+            "empty": not helpful
+            and not costly
+            and not personalized_priors
+            and not map_feedback,
+            "personalized_priors": personalized_priors,
             "helpful": helpful,
             "costly": costly,
             "map_feedback": map_feedback,
@@ -255,6 +273,8 @@ class PolicyMemory:
         intervention = var()
         outcome = var()
         focus = var()
+        pattern = var()
+        usefulness = var()
         node_kind = var()
         node_label = var()
         action = var()
@@ -264,6 +284,20 @@ class PolicyMemory:
                     0,
                     (intervention, outcome, focus),
                     self.experiment_outcome(intervention, outcome, focus),
+                )
+            ),
+            "experiment_pattern": tuple(
+                run(
+                    0,
+                    (intervention, outcome, focus, pattern),
+                    self.experiment_pattern(intervention, outcome, focus, pattern),
+                )
+            ),
+            "experiment_usefulness": tuple(
+                run(
+                    0,
+                    (intervention, outcome, usefulness),
+                    self.experiment_usefulness(intervention, outcome, usefulness),
                 )
             ),
             "formulation_feedback": tuple(
@@ -277,6 +311,8 @@ class PolicyMemory:
 
     def _rebuild_relations(self) -> None:
         self.experiment_outcome = Relation("policy_experiment_outcome")
+        self.experiment_pattern = Relation("policy_experiment_pattern")
+        self.experiment_usefulness = Relation("policy_experiment_usefulness")
         self.formulation_feedback = Relation("policy_formulation_feedback")
         for record in self._experiment_records:
             fact(
@@ -285,6 +321,21 @@ class PolicyMemory:
                 record.outcome,
                 record.focus,
             )
+            for pattern_key in record.pattern_keys:
+                fact(
+                    self.experiment_pattern,
+                    record.intervention,
+                    record.outcome,
+                    record.focus,
+                    pattern_key,
+                )
+            if record.usefulness is not None:
+                fact(
+                    self.experiment_usefulness,
+                    record.intervention,
+                    record.outcome,
+                    record.usefulness,
+                )
         for record in self._formulation_records:
             fact(
                 self.formulation_feedback,
@@ -301,6 +352,7 @@ class PolicyMemory:
         reasons: list[str] = []
         evidence: list[str] = []
         delta = 0.0
+        candidate_pattern_keys = _candidate_pattern_key_labels(candidate)
 
         experiment_delta = 0.0
         matching_records = [
@@ -310,18 +362,22 @@ class PolicyMemory:
         ]
         for weight, record in _decayed(matching_records):
             record_delta = _outcome_delta(record.outcome)
+            record_delta += _usefulness_delta(record.usefulness)
             if record.friction_before is not None and record.friction_after is not None:
                 record_delta += max(
                     -0.4,
                     min(0.4, (record.friction_before - record.friction_after) / 10),
                 )
-            experiment_delta += record_delta * weight
+            context_weight = _context_weight(
+                candidate_pattern_keys, record.pattern_keys
+            )
+            experiment_delta += record_delta * weight * context_weight
             evidence.append(f"experiment:{record.experiment_id}:{record.outcome}")
         experiment_delta = max(-2.0, min(2.0, experiment_delta))
         if experiment_delta:
             delta += experiment_delta
             latest = matching_records[-1]
-            reasons.append(_experiment_reason(latest))
+            reasons.append(_experiment_reason(latest, candidate_pattern_keys))
 
         hypothesis_keys = _candidate_hypothesis_keys(candidate)
         map_delta = 0.0
@@ -344,7 +400,7 @@ class PolicyMemory:
 
         return round(delta, 2), _unique(reasons), _unique(evidence)
 
-    def _outcome_summary(self, *, positive: bool) -> list[dict[str, str]]:
+    def _outcome_summary(self, *, positive: bool) -> list[dict[str, Any]]:
         grouped: dict[str, list[PolicyExperimentRecord]] = {}
         for record in self._experiment_records:
             outcome_score = _outcome_delta(record.outcome)
@@ -359,10 +415,13 @@ class PolicyMemory:
             latest = records[-1]
             count = len(records)
             focus_text = f" around {latest.focus}" if latest.focus else ""
+            usefulness_text = _avg_usefulness_text(records)
             if positive:
                 description = f"{count} positive outcome{'s' if count != 1 else ''}{focus_text}; latest was {latest.outcome}."
             else:
                 description = f"{count} costly outcome{'s' if count != 1 else ''}{focus_text}; latest was {latest.outcome}."
+            if usefulness_text:
+                description = f"{description[:-1]}; {usefulness_text}."
             items.append(
                 {
                     "intervention": intervention,
@@ -373,6 +432,60 @@ class PolicyMemory:
             )
         items.sort(key=lambda item: (item["intervention"], item["latest_outcome"]))
         return items
+
+    def _personalized_priors(self) -> list[dict[str, Any]]:
+        grouped: dict[tuple[str, str], list[PolicyExperimentRecord]] = {}
+        for record in self._experiment_records[-60:]:
+            context = _context_label(record.pattern_keys, record.focus)
+            grouped.setdefault((record.intervention, context), []).append(record)
+
+        priors = []
+        for (intervention, context), records in grouped.items():
+            useful_values = [
+                item.usefulness for item in records if item.usefulness is not None
+            ]
+            avg_usefulness = (
+                round(sum(useful_values) / len(useful_values), 1)
+                if useful_values
+                else None
+            )
+            positive_count = sum(
+                1 for item in records if _outcome_delta(item.outcome) > 0
+            )
+            costly_count = sum(
+                1 for item in records if _outcome_delta(item.outcome) < 0
+            )
+            latest = records[-1]
+            score = positive_count - costly_count
+            if avg_usefulness is not None:
+                score += (avg_usefulness - 5.0) / 5.0
+            description_parts = [
+                f"{_human_label(intervention)} around {context}",
+                f"{positive_count}/{len(records)} positive",
+            ]
+            if costly_count:
+                description_parts.append(f"{costly_count} costly")
+            if avg_usefulness is not None:
+                description_parts.append(f"avg usefulness {avg_usefulness}/10")
+            if latest.emotional_shift:
+                description_parts.append(f"latest shift: {latest.emotional_shift}")
+            priors.append(
+                {
+                    "intervention": intervention,
+                    "context": context,
+                    "observations": len(records),
+                    "positive": positive_count,
+                    "costly": costly_count,
+                    "avg_usefulness": avg_usefulness,
+                    "latest_outcome": latest.outcome,
+                    "latest_action_taken": latest.action_taken,
+                    "latest_shift": latest.emotional_shift,
+                    "description": "; ".join(description_parts) + ".",
+                    "score": round(score, 2),
+                }
+            )
+        priors.sort(key=lambda item: (-_float(item["score"]), item["intervention"]))
+        return priors[:8]
 
 
 def _candidate_hypothesis_keys(candidate: Mapping[str, Any]) -> set[tuple[str, str]]:
@@ -385,6 +498,13 @@ def _candidate_hypothesis_keys(candidate: Mapping[str, Any]) -> set[tuple[str, s
         if source and pattern:
             keys.add((source, pattern))
     return keys
+
+
+def _candidate_pattern_key_labels(candidate: Mapping[str, Any]) -> set[str]:
+    return {
+        f"{source}:{pattern}"
+        for source, pattern in _candidate_hypothesis_keys(candidate)
+    }
 
 
 def _parse_hypothesis_label(label: str) -> tuple[str, str] | None:
@@ -409,19 +529,76 @@ def _outcome_delta(outcome: str) -> float:
     }.get(outcome, 0.0)
 
 
-def _experiment_reason(record: PolicyExperimentRecord) -> str:
+def _usefulness_delta(usefulness: int | None) -> float:
+    if usefulness is None:
+        return 0.0
+    return max(-0.8, min(0.8, ((usefulness - 5) / 5) * 0.8))
+
+
+def _context_weight(candidate_keys: set[str], record_keys: tuple[str, ...]) -> float:
+    record_key_set = set(record_keys)
+    if not candidate_keys or not record_key_set:
+        return 1.0
+    overlap = candidate_keys & record_key_set
+    if overlap:
+        return 1.0 + min(0.6, 0.2 * len(overlap))
+    return 0.55
+
+
+def _experiment_reason(
+    record: PolicyExperimentRecord,
+    candidate_keys: set[str] | None = None,
+) -> str:
     label = _human_label(record.intervention)
+    context = _shared_context_text(candidate_keys or set(), record.pattern_keys)
+    usefulness = (
+        f" and was rated {record.usefulness}/10 useful"
+        if record.usefulness is not None
+        else ""
+    )
+    prefix = f"Prior feedback{context} said {label}"
     if record.outcome == "too_hard":
-        return f"Prior feedback said {label} was too hard; shrink the dose or choose a gentler route."
+        return f"{prefix} was too hard{usefulness}; shrink the dose or choose a gentler route."
     if record.outcome == "did_not_help":
-        return f"Prior feedback said {label} did not help; use it cautiously."
+        return f"{prefix} did not help{usefulness}; use it cautiously."
     if record.outcome == "skipped":
-        return f"A prior {label} experiment was skipped; keep the next step smaller."
+        return f"A prior {label} experiment{context} was skipped{usefulness}; keep the next step smaller."
     if record.outcome == "helped":
-        return f"Prior feedback said {label} helped."
+        return f"{prefix} helped{usefulness}."
     if record.outcome == "completed":
-        return f"A prior {label} experiment was completed."
-    return f"Prior feedback on {label} was {record.outcome}."
+        return f"A prior {label} experiment{context} was completed{usefulness}."
+    return f"Prior feedback on {label}{context} was {record.outcome}{usefulness}."
+
+
+def _shared_context_text(candidate_keys: set[str], record_keys: tuple[str, ...]) -> str:
+    overlap = candidate_keys & set(record_keys)
+    if not overlap:
+        return ""
+    return f" in a similar {_human_context(overlap)} context"
+
+
+def _context_label(pattern_keys: tuple[str, ...], fallback: str) -> str:
+    if pattern_keys:
+        return _human_context(pattern_keys[:2])
+    if fallback:
+        return _human_label(fallback)
+    return "similar situations"
+
+
+def _human_context(pattern_keys: Any) -> str:
+    labels = []
+    for key in pattern_keys:
+        _, _, pattern = str(key).partition(":")
+        labels.append(_human_label(pattern or str(key)))
+    return " + ".join(_unique(labels)) or "similar situations"
+
+
+def _avg_usefulness_text(records: list[PolicyExperimentRecord]) -> str | None:
+    values = [item.usefulness for item in records if item.usefulness is not None]
+    if not values:
+        return None
+    average = round(sum(values) / len(values), 1)
+    return f"avg usefulness {average}/10"
 
 
 def _formulation_reason(record: PolicyFormulationRecord) -> str:

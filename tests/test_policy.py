@@ -20,7 +20,9 @@ class PolicyMemoryTests(unittest.TestCase):
                 prediction="More space.",
                 measure="Rate usefulness.",
                 rationale="Because fusion was present.",
+                pattern_keys=("act:fusion",),
                 outcome="helped",
+                usefulness=8,
             )
         )
 
@@ -44,6 +46,14 @@ class PolicyMemoryTests(unittest.TestCase):
             ("cognitive_defusion", "helped", "identity fusion"),
             policy.relation_facts()["experiment_outcome"],
         )
+        self.assertIn(
+            ("cognitive_defusion", "helped", "identity fusion", "act:fusion"),
+            policy.relation_facts()["experiment_pattern"],
+        )
+        self.assertIn(
+            ("cognitive_defusion", "helped", 8),
+            policy.relation_facts()["experiment_usefulness"],
+        )
 
     def test_too_hard_experiment_penalizes_matching_candidate(self):
         policy = PolicyMemory()
@@ -60,6 +70,7 @@ class PolicyMemoryTests(unittest.TestCase):
                 measure="Rate usefulness.",
                 rationale="Because demandingness was present.",
                 outcome="too_hard",
+                usefulness=2,
             )
         )
 
@@ -75,6 +86,62 @@ class PolicyMemoryTests(unittest.TestCase):
         self.assertLess(candidate["score"], 5.0)
         self.assertIn("too hard", candidate["policy_reasons"][0])
         self.assertIn("shrink", policy.prompt_context())
+
+    def test_outcome_learning_is_stronger_for_matching_context(self):
+        policy = PolicyMemory()
+        policy.record_experiment(
+            CoachingExperiment(
+                id="exp-3",
+                created_turn=1,
+                intervention="cognitive_defusion",
+                focus="identity fusion",
+                title="Defusion test",
+                hypothesis="Test",
+                action="Try defusion.",
+                prediction="More space.",
+                measure="Rate usefulness.",
+                rationale="Because fusion was present.",
+                pattern_keys=("act:fusion", "loop:shame_self_worth_fusion"),
+                outcome="helped",
+                usefulness=9,
+                emotional_shift="more distance from the thought",
+                action_taken="named the thought and opened the draft",
+            )
+        )
+
+        snapshot, _report = policy.apply_to_kernel_snapshot(
+            {
+                "candidates": [
+                    {
+                        "intervention": "cognitive_defusion",
+                        "score": 3.0,
+                        "hypotheses": [
+                            {"source": "act", "pattern": "fusion"},
+                            {
+                                "source": "loop",
+                                "pattern": "shame_self_worth_fusion",
+                            },
+                        ],
+                    },
+                    {
+                        "intervention": "cognitive_defusion",
+                        "score": 3.0,
+                        "hypotheses": [
+                            {"source": "act", "pattern": "values_unclear"},
+                        ],
+                    },
+                ]
+            }
+        )
+
+        self.assertIn("fusion", snapshot["candidates"][0]["policy_reasons"][0])
+        self.assertGreater(
+            snapshot["candidates"][0]["policy_delta"],
+            snapshot["candidates"][1]["policy_delta"],
+        )
+        priors = policy.summary()["personalized_priors"]
+        self.assertTrue(priors)
+        self.assertIn("avg usefulness 9.0/10", priors[0]["description"])
 
     def test_rejected_hypothesis_penalizes_supported_candidate(self):
         policy = PolicyMemory()

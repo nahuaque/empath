@@ -302,8 +302,11 @@ class ExperimentFeedbackRequest(BaseModel):
     experiment_id: str = Field(min_length=1, max_length=128)
     action: ExperimentFeedbackAction
     note: str | None = Field(default=None, max_length=1000)
+    usefulness: int | None = Field(default=None, ge=0, le=10)
     friction_before: int | None = Field(default=None, ge=0, le=10)
     friction_after: int | None = Field(default=None, ge=0, le=10)
+    emotional_shift: str | None = Field(default=None, max_length=500)
+    action_taken: str | None = Field(default=None, max_length=500)
 
 
 class ExperimentFeedbackResponse(BaseModel):
@@ -1460,8 +1463,11 @@ def create_app(
                     payload.experiment_id,
                     payload.action,
                     note=payload.note,
+                    usefulness=payload.usefulness,
                     friction_before=payload.friction_before,
                     friction_after=payload.friction_after,
+                    emotional_shift=payload.emotional_shift,
+                    action_taken=payload.action_taken,
                 )
                 workspace_scope.workspace.policy.record_experiment(result.experiment)
                 _sync_transcript_experiment(
@@ -4255,6 +4261,46 @@ CHAT_APP_HTML = r"""<!doctype html>
       color: var(--muted);
       font-size: 12px;
     }
+    .experiment-feedback-fields {
+      display: grid;
+      gap: 8px;
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid #dbe7e1;
+    }
+    .experiment-feedback-inline {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .experiment-field {
+      display: grid;
+      gap: 4px;
+    }
+    .experiment-field label {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 760;
+      letter-spacing: 0;
+      text-transform: uppercase;
+    }
+    .experiment-field input {
+      width: 100%;
+      border: 1px solid #cbdad4;
+      border-radius: 8px;
+      padding: 7px 8px;
+      background: #ffffff;
+      color: var(--ink);
+      font: inherit;
+      font-size: 12px;
+    }
+    .experiment-outcome-summary {
+      display: grid;
+      gap: 5px;
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid #dbe7e1;
+    }
     .experiment-actions {
       display: flex;
       flex-wrap: wrap;
@@ -4697,6 +4743,7 @@ CHAT_APP_HTML = r"""<!doctype html>
       button.experiment-action { width: auto; }
       .progress-toast { width: 94%; }
       .experiment-row { grid-template-columns: 1fr; gap: 2px; }
+      .experiment-feedback-inline { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -5453,9 +5500,16 @@ CHAT_APP_HTML = r"""<!doctype html>
         card.appendChild(rationale);
       }
 
+      const disabled = experiment.status && experiment.status !== "proposed";
+      if (disabled) {
+        const outcomeSummary = renderExperimentOutcomeSummary(experiment);
+        if (outcomeSummary) card.appendChild(outcomeSummary);
+      } else {
+        card.appendChild(renderExperimentOutcomeFields(experiment));
+      }
+
       const actions = document.createElement("div");
       actions.className = "experiment-actions";
-      const disabled = experiment.status && experiment.status !== "proposed";
       actions.appendChild(experimentActionButton("Done", "completed", disabled));
       actions.appendChild(experimentActionButton("Helped", "helped", disabled));
       actions.appendChild(experimentActionButton("Did not help", "did_not_help", disabled));
@@ -5477,6 +5531,65 @@ CHAT_APP_HTML = r"""<!doctype html>
       row.appendChild(labelNode);
       row.appendChild(valueNode);
       return row;
+    }
+
+    function renderExperimentOutcomeFields(experiment) {
+      const panel = document.createElement("div");
+      panel.className = "experiment-feedback-fields";
+
+      const inline = document.createElement("div");
+      inline.className = "experiment-feedback-inline";
+      inline.appendChild(experimentInputField("Usefulness", "usefulness", "number", experiment.usefulness, "0-10", 0, 10));
+      inline.appendChild(experimentInputField("Friction before", "friction_before", "number", experiment.friction_before, "0-10", 0, 10));
+      inline.appendChild(experimentInputField("Friction after", "friction_after", "number", experiment.friction_after, "0-10", 0, 10));
+      panel.appendChild(inline);
+
+      panel.appendChild(experimentInputField("What happened", "action_taken", "text", experiment.action_taken, "e.g. opened the draft for 8 minutes"));
+      panel.appendChild(experimentInputField("Emotional shift", "emotional_shift", "text", experiment.emotional_shift, "e.g. less stuck, still anxious"));
+      return panel;
+    }
+
+    function renderExperimentOutcomeSummary(experiment) {
+      const rows = [];
+      if (experiment.usefulness !== undefined && experiment.usefulness !== null) {
+        rows.push(["Usefulness", `${experiment.usefulness}/10`]);
+      }
+      if (experiment.friction_before !== undefined && experiment.friction_before !== null && experiment.friction_after !== undefined && experiment.friction_after !== null) {
+        rows.push(["Friction", `${experiment.friction_before}/10 → ${experiment.friction_after}/10`]);
+      }
+      if (experiment.action_taken) rows.push(["What happened", experiment.action_taken]);
+      if (experiment.emotional_shift) rows.push(["Shift", experiment.emotional_shift]);
+      if (!rows.length) return null;
+
+      const panel = document.createElement("div");
+      panel.className = "experiment-outcome-summary";
+      for (const [label, value] of rows) {
+        panel.appendChild(experimentRow(label, value));
+      }
+      return panel;
+    }
+
+    function experimentInputField(label, name, type, value, placeholder, min = null, max = null) {
+      const field = document.createElement("div");
+      field.className = "experiment-field";
+      const labelNode = document.createElement("label");
+      labelNode.textContent = label;
+      const input = document.createElement("input");
+      input.type = type;
+      input.dataset.experimentField = name;
+      input.placeholder = placeholder || "";
+      if (type === "number") {
+        input.inputMode = "numeric";
+        input.step = "1";
+        if (min !== null) input.min = String(min);
+        if (max !== null) input.max = String(max);
+      }
+      if (value !== undefined && value !== null) {
+        input.value = String(value);
+      }
+      field.appendChild(labelNode);
+      field.appendChild(input);
+      return field;
     }
 
     function experimentActionButton(label, action, disabled) {
@@ -5575,10 +5688,11 @@ CHAT_APP_HTML = r"""<!doctype html>
     function renderPolicy(policy) {
       policyMemory = policy || { empty: true };
       policySummary.textContent = "";
+      const priors = policyMemory.personalized_priors || [];
       const helpful = policyMemory.helpful || [];
       const costly = policyMemory.costly || [];
       const corrections = policyMemory.map_feedback || [];
-      if (policyMemory.empty || (!helpful.length && !costly.length && !corrections.length)) {
+      if (policyMemory.empty || (!priors.length && !helpful.length && !costly.length && !corrections.length)) {
         policySummary.hidden = true;
         return;
       }
@@ -5589,6 +5703,9 @@ CHAT_APP_HTML = r"""<!doctype html>
 
       const grid = document.createElement("div");
       grid.className = "policy-grid";
+      if (priors.length) {
+        grid.appendChild(renderPolicyRow("What seems to work", priors.map((item) => item.description || humanizeMapLabel(item.intervention))));
+      }
       if (helpful.length) {
         grid.appendChild(renderPolicyRow("Try more", helpful.map((item) => item.description || humanizeMapLabel(item.intervention))));
       }
@@ -5777,6 +5894,7 @@ CHAT_APP_HTML = r"""<!doctype html>
     async function sendExperimentFeedback(card, action) {
       const experimentId = card.dataset.experimentId;
       if (!experimentId) return;
+      const feedback = readExperimentFeedback(card);
       setStatus("Recording experiment");
       const response = await fetch("/api/experiments/feedback", {
         method: "POST",
@@ -5784,6 +5902,7 @@ CHAT_APP_HTML = r"""<!doctype html>
         body: JSON.stringify(scopedBody({
           experiment_id: experimentId,
           action,
+          ...feedback,
         })),
       });
       if (!response.ok) {
@@ -5800,6 +5919,25 @@ CHAT_APP_HTML = r"""<!doctype html>
       }
       renderPolicy(data.policy || policyMemory);
       setStatus("Ready");
+    }
+
+    function readExperimentFeedback(card) {
+      const feedback = {};
+      for (const name of ["usefulness", "friction_before", "friction_after"]) {
+        const field = card.querySelector(`[data-experiment-field="${name}"]`);
+        const raw = field ? String(field.value || "").trim() : "";
+        if (raw === "") continue;
+        const value = Number(raw);
+        if (Number.isInteger(value) && value >= 0 && value <= 10) {
+          feedback[name] = value;
+        }
+      }
+      for (const name of ["action_taken", "emotional_shift"]) {
+        const field = card.querySelector(`[data-experiment-field="${name}"]`);
+        const value = field ? String(field.value || "").trim() : "";
+        if (value) feedback[name] = value;
+      }
+      return feedback;
     }
 
     async function retryUserTurn(wrap, replacementText = null) {

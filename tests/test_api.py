@@ -1517,6 +1517,11 @@ class ApiSurfaceTests(unittest.TestCase):
                 "session_id": "experiment-session",
                 "experiment_id": experiment_id,
                 "action": "helped",
+                "usefulness": 8,
+                "friction_before": 7,
+                "friction_after": 4,
+                "action_taken": "Opened the prototype file for ten minutes.",
+                "emotional_shift": "Still uneasy but more willing.",
             },
         )
         listing = client.get(
@@ -1531,10 +1536,16 @@ class ApiSurfaceTests(unittest.TestCase):
         self.assertEqual(200, response.status_code)
         self.assertEqual("reviewed", response.json()["result"]["experiment"]["status"])
         self.assertEqual("helped", response.json()["result"]["experiment"]["outcome"])
+        self.assertEqual(8, response.json()["result"]["experiment"]["usefulness"])
+        self.assertEqual(
+            "Opened the prototype file for ten minutes.",
+            response.json()["result"]["experiment"]["action_taken"],
+        )
         self.assertIn("useful evidence", response.json()["result"]["learning"])
         self.assertIn("policy", response.json())
         self.assertEqual(1, response.json()["policy"]["counts"]["experiment_outcomes"])
         self.assertTrue(response.json()["policy"]["helpful"])
+        self.assertTrue(response.json()["policy"]["personalized_priors"])
         self.assertEqual("helped", listing.json()["experiments"][0]["outcome"])
         self.assertEqual(
             "helped",

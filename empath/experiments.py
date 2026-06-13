@@ -39,10 +39,14 @@ class CoachingExperiment(BaseModel):
     timebox: str = "10 minutes"
     rationale: str
     support_node_ids: tuple[str, ...] = Field(default_factory=tuple)
+    pattern_keys: tuple[str, ...] = Field(default_factory=tuple)
     outcome: ExperimentFeedbackAction | None = None
+    usefulness: int | None = Field(default=None, ge=0, le=10)
     note: str | None = None
     friction_before: int | None = Field(default=None, ge=0, le=10)
     friction_after: int | None = Field(default=None, ge=0, le=10)
+    emotional_shift: str | None = None
+    action_taken: str | None = None
     learning: str | None = None
 
 
@@ -94,8 +98,11 @@ class ExperimentStore:
         action: ExperimentFeedbackAction,
         *,
         note: str | None = None,
+        usefulness: int | None = None,
         friction_before: int | None = None,
         friction_after: int | None = None,
+        emotional_shift: str | None = None,
+        action_taken: str | None = None,
     ) -> ExperimentFeedbackResult:
         experiment = self._experiments.get(experiment_id)
         if experiment is None:
@@ -103,9 +110,12 @@ class ExperimentStore:
 
         experiment.status = "skipped" if action == "skipped" else "reviewed"
         experiment.outcome = action
+        experiment.usefulness = usefulness
         experiment.note = _clean_text(note)
         experiment.friction_before = friction_before
         experiment.friction_after = friction_after
+        experiment.emotional_shift = _clean_text(emotional_shift)
+        experiment.action_taken = _clean_text(action_taken)
         experiment.learning = _learning_for_feedback(experiment, action)
         return ExperimentFeedbackResult(
             experiment=experiment.model_copy(deep=True),
@@ -190,6 +200,7 @@ def propose_experiment(
         timebox=str(template["timebox"]),
         rationale=_rationale(intervention, selected_hypotheses),
         support_node_ids=support_node_ids,
+        pattern_keys=_hypothesis_key_labels(selected_hypotheses),
     )
 
 
@@ -207,6 +218,18 @@ def _candidate_for_intervention(
 
 def _hypotheses(candidate: Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]:
     return tuple(_as_mapping(item) for item in (candidate.get("hypotheses") or ()))
+
+
+def _hypothesis_key_labels(
+    hypotheses: tuple[Mapping[str, Any], ...],
+) -> tuple[str, ...]:
+    keys = []
+    for item in hypotheses:
+        source = _clean_label(item.get("source"))
+        pattern = _clean_label(item.get("pattern"))
+        if source and pattern:
+            keys.append(f"{source}:{pattern}")
+    return tuple(dict.fromkeys(keys))
 
 
 def _primary_pattern(hypotheses: tuple[Mapping[str, Any], ...]) -> str:

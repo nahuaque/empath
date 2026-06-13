@@ -447,7 +447,9 @@ async def _explanation_evidence(
             selected_node_ids.update(item for item in (source_id, target_id) if item)
 
     experiments = await db.query(
-        "SELECT experiment_id, intervention, pattern, try_step, prediction, measure, status "
+        "SELECT experiment_id, intervention, pattern, pattern_keys, try_step, "
+        "prediction, measure, status, outcome, usefulness, friction_before, "
+        "friction_after, emotional_shift, action_taken "
         "FROM coaching_experiment "
         "WHERE app_record = $app_record "
         "AND workspace_key = $workspace_key "
@@ -639,7 +641,9 @@ async def _memory_packet(
         edges = edges[:10]
 
     experiments = await db.query(
-        "SELECT experiment_id, intervention, pattern, status, try_step, prediction, measure, message_index "
+        "SELECT experiment_id, intervention, pattern, pattern_keys, status, try_step, "
+        "prediction, measure, outcome, usefulness, emotional_shift, action_taken, "
+        "message_index "
         "FROM coaching_experiment "
         "WHERE app_record = $app_record AND workspace_key = $workspace_key "
         "ORDER BY message_index DESC LIMIT 8",
@@ -1387,11 +1391,25 @@ async def _project_experiment(
             "experiment_id": experiment_id,
             "status": _string_or_empty(experiment.get("status")),
             "intervention": _string_or_empty(experiment.get("intervention")),
-            "pattern": _string_or_empty(experiment.get("pattern")),
-            "test": _string_or_empty(experiment.get("test")),
-            "try_step": _string_or_empty(experiment.get("try_step")),
+            "pattern": _string_or_empty(
+                experiment.get("pattern") or experiment.get("focus")
+            ),
+            "pattern_keys": _string_tuple(experiment.get("pattern_keys")),
+            "test": _string_or_empty(
+                experiment.get("test") or experiment.get("hypothesis")
+            ),
+            "try_step": _string_or_empty(
+                experiment.get("try_step") or experiment.get("action")
+            ),
             "prediction": _string_or_empty(experiment.get("prediction")),
             "measure": _string_or_empty(experiment.get("measure")),
+            "outcome": _string_or_empty(experiment.get("outcome")),
+            "usefulness": _optional_int(experiment.get("usefulness")),
+            "friction_before": _optional_int(experiment.get("friction_before")),
+            "friction_after": _optional_int(experiment.get("friction_after")),
+            "emotional_shift": _string_or_empty(experiment.get("emotional_shift")),
+            "action_taken": _string_or_empty(experiment.get("action_taken")),
+            "learning": _string_or_empty(experiment.get("learning")),
             "message_index": _optional_int(experiment.get("message_index")),
         },
     )
@@ -1735,6 +1753,18 @@ def _nested_string(data: Mapping[str, Any], *keys: str) -> str | None:
 
 def _string_or_empty(value: Any) -> str:
     return "" if value is None else str(value)
+
+
+def _string_tuple(value: Any) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        cleaned = value.strip()
+        return (cleaned,) if cleaned else ()
+    try:
+        return tuple(str(item).strip() for item in value if str(item).strip())
+    except TypeError:
+        return ()
 
 
 def _int_or_zero(value: Any) -> int:

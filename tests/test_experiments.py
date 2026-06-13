@@ -55,6 +55,8 @@ class CoachingExperimentTests(unittest.TestCase):
         self.assertEqual("goal activation", experiment.focus)
         self.assertIn("Open the draft", experiment.action)
         self.assertIn("urge-to-avoid", experiment.measure)
+        self.assertIn("act:experiential_avoidance", experiment.pattern_keys)
+        self.assertIn("focus:goal_activation", experiment.pattern_keys)
         self.assertTrue(experiment.support_node_ids)
 
     def test_store_records_feedback_and_learning(self):
@@ -88,12 +90,24 @@ class CoachingExperimentTests(unittest.TestCase):
         result = store.apply_feedback(
             experiment.id,
             "too_hard",
+            usefulness=3,
             friction_before=8,
             friction_after=7,
+            action_taken="Looked at the evidence prompt but did not finish.",
+            emotional_shift="Still anxious, slightly clearer.",
         )
 
         self.assertEqual("reviewed", result.experiment.status)
         self.assertEqual("too_hard", result.experiment.outcome)
+        self.assertEqual(3, result.experiment.usefulness)
+        self.assertEqual(
+            "Looked at the evidence prompt but did not finish.",
+            result.experiment.action_taken,
+        )
+        self.assertEqual(
+            "Still anxious, slightly clearer.",
+            result.experiment.emotional_shift,
+        )
         self.assertIn("shrink", result.learning)
         self.assertEqual(1, len(result.experiments))
 

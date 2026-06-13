@@ -113,10 +113,18 @@ class SurrealStateBackendTests(unittest.TestCase):
                                         "status": "proposed",
                                         "intervention": "validation",
                                         "pattern": "minimal_disclosure",
+                                        "pattern_keys": [
+                                            "loop:minimal_disclosure_sad_anxious",
+                                            "emotion:sadness",
+                                        ],
                                         "test": "Try naming the feeling.",
                                         "try_step": "Name sadness out loud once.",
                                         "prediction": "Slightly more clarity.",
                                         "measure": "Rate usefulness 0-10.",
+                                        "outcome": "helped",
+                                        "usefulness": 8,
+                                        "emotional_shift": "a little clearer",
+                                        "action_taken": "named sadness once",
                                         "message_index": 2,
                                     }
                                 ],
@@ -143,7 +151,9 @@ class SurrealStateBackendTests(unittest.TestCase):
                 {"conversation": "default/workspace-a/alpha"},
             )
             experiments = await db.query(
-                "SELECT experiment_id, intervention, try_step FROM coaching_experiment "
+                "SELECT experiment_id, intervention, try_step, pattern_keys, "
+                "outcome, usefulness, emotional_shift, action_taken "
+                "FROM coaching_experiment "
                 "WHERE workspace_key = $workspace",
                 {"workspace": "default/workspace-a"},
             )
@@ -171,6 +181,14 @@ class SurrealStateBackendTests(unittest.TestCase):
             self.assertEqual("intervention:validation", edges[0]["target_node_id"])
             self.assertEqual(["user", "assistant"], [item["role"] for item in messages])
             self.assertEqual("Name sadness out loud once.", experiments[0]["try_step"])
+            self.assertEqual("helped", experiments[0]["outcome"])
+            self.assertEqual(8, experiments[0]["usefulness"])
+            self.assertEqual(
+                ["loop:minimal_disclosure_sad_anxious", "emotion:sadness"],
+                experiments[0]["pattern_keys"],
+            )
+            self.assertEqual("a little clearer", experiments[0]["emotional_shift"])
+            self.assertEqual("named sadness once", experiments[0]["action_taken"])
             self.assertEqual("sadness", provenance[0]["evidence"])
             self.assertEqual("db-compaction-v1", compaction[0]["policy_version"])
             self.assertEqual(2, compaction[0]["active_node_count"])
