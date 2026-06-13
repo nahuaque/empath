@@ -19,7 +19,7 @@ from pydantic_ai.messages import ModelMessage
 from sse_starlette.sse import EventSourceResponse
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, JSONResponse, Response
+from starlette.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from starlette.routing import Route
 
 from .chat import (
@@ -62,6 +62,7 @@ DEFAULT_USER_ID = "default"
 DEFAULT_WORKSPACE_ID = "default"
 DEFAULT_STATE_FILE = ".empath_chat_state.json"
 DEFAULT_SURREAL_FILE = ".empath_surreal.db"
+HEADER_LOGO_PATH = Path(__file__).resolve().parent / "static" / "empath-logo-header.png"
 
 
 class ChatRequest(BaseModel):
@@ -1064,6 +1065,11 @@ def create_app(
     async def index(_request: Request) -> HTMLResponse:
         return HTMLResponse(CHAT_APP_HTML)
 
+    async def header_logo(_request: Request) -> Response:
+        if not HEADER_LOGO_PATH.exists():
+            return Response("Logo asset not found.", status_code=404)
+        return FileResponse(HEADER_LOGO_PATH, media_type="image/png")
+
     async def chat_json(request: Request) -> JSONResponse:
         try:
             payload = ChatRequest.model_validate(await request.json())
@@ -1774,6 +1780,7 @@ def create_app(
         debug=False,
         routes=[
             Route("/", index, methods=["GET"]),
+            Route("/assets/empath-logo-header.png", header_logo, methods=["GET"]),
             Route("/api/health", health, methods=["GET"]),
             Route(
                 "/api/workspaces",
@@ -3897,6 +3904,23 @@ CHAT_APP_HTML = r"""<!doctype html>
       font-weight: 680;
       letter-spacing: 0;
     }
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+    .brand-logo {
+      display: block;
+      width: 156px;
+      height: auto;
+      flex: 0 0 auto;
+    }
     .status {
       color: var(--muted);
       font-size: 13px;
@@ -4779,6 +4803,7 @@ CHAT_APP_HTML = r"""<!doctype html>
         gap: 10px;
         padding: 12px 14px;
       }
+      .brand-logo { width: 132px; }
       .header-actions {
         width: 100%;
         grid-template-columns: 1fr;
@@ -4817,7 +4842,8 @@ CHAT_APP_HTML = r"""<!doctype html>
     <main>
       <header>
         <div class="header-main">
-          <h1>Empath Chat</h1>
+          <h1 class="sr-only">Empath Chat</h1>
+          <img class="brand-logo" src="/assets/empath-logo-header.png" alt="Empath">
           <div class="status" id="status">Ready</div>
         </div>
         <div class="header-actions">

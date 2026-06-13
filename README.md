@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/empath-logo.png" alt="Empath logo" width="420">
+</p>
+
 # Empath
 
 Empath is an experimental coaching chat app with a symbolic reasoning layer.

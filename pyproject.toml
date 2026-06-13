@@ -22,6 +22,12 @@ empath-kernel-demo = "empath.therapeutic_kernel:main"
 requires = ["setuptools>=80.0"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools.packages.find]
+include = ["empath*"]
+
+[tool.setuptools.package-data]
+empath = ["static/*.png"]
+
 [dependency-groups]
 dev = [
     "pytest>=9.0.3",

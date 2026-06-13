@@ -54,6 +54,7 @@ class ApiSurfaceTests(unittest.TestCase):
 
         health = client.get("/api/health")
         page = client.get("/")
+        logo = client.get("/assets/empath-logo-header.png")
 
         self.assertEqual(200, health.status_code)
         self.assertTrue(health.json()["ok"])
@@ -61,6 +62,9 @@ class ApiSurfaceTests(unittest.TestCase):
         self.assertEqual("memory", health.json()["state_backend"])
         self.assertEqual(200, page.status_code)
         self.assertIn("Empath Chat", page.text)
+        self.assertIn("/assets/empath-logo-header.png", page.text)
+        self.assertEqual(200, logo.status_code)
+        self.assertEqual("image/png", logo.headers["content-type"])
         self.assertIn("EventSource", page.text)
         self.assertIn("loadSession", page.text)
         self.assertIn("newChat", page.text)
