@@ -1,8 +1,10 @@
 ## Empath therapeutic reasoning kernel
 
-This repository contains a small Python miniKanren kernel for coaching-oriented
-ACT/CBT/REBT/DBT reasoning. It is intended to produce inspectable therapeutic
-hypotheses and intervention candidates, not diagnoses.
+This repository contains a small Python miniKanren kernel and chat surface for
+coaching-oriented ACT/CBT/REBT/DBT/MBSR/Focusing reasoning, with a neutral
+consultative facilitation fallback for non-coaching questions. It is intended
+to produce inspectable coaching hypotheses and intervention candidates, not
+diagnoses.
 
 ```python
 from empath import CoachingState, TherapeuticReasoningKernel
@@ -39,17 +41,18 @@ Architecture:
 structured observations -> miniKanren hypotheses -> safe candidates -> ranking
 ```
 
-The chat app also keeps a longitudinal working formulation per session:
+The chat app also keeps a longitudinal working formulation per workspace:
 
 ```text
 turn extraction + kernel hypotheses + chosen intervention -> formulation graph
 ```
 
-The graph stores tentative observations, hypotheses, interventions, and
-relationships with turn provenance. The browser exposes this as a Working Map
-beside the trace inspector, and each node can be marked as fitting, not quite,
-or removed. User corrections persist in the in-memory session and removed nodes
-are not reintroduced by later turns.
+The graph stores tentative observations, hypotheses, interventions, tasks,
+objectives, and relationships with turn provenance. A user can have multiple
+workspaces, and each workspace can have multiple conversations. The Working Map
+is workspace-scoped and can be enriched by any active conversation in that
+workspace. The browser exposes this map beside the trace inspector, and each
+node can be marked as fitting, not quite, or removed.
 
 Each assistant turn also proposes a tiny N-of-1 coaching experiment. The
 experiment layer takes the selected intervention, supporting hypotheses, and
@@ -65,12 +68,12 @@ The relational layer answers questions like:
 - what known states would justify a given intervention?
 - which candidates are contraindicated before validation or safety handling?
 
-Therapeutic systems are now modular. ACT, CBT, REBT, DBT, coaching focus, and
-cross-system loops live under `empath/therapeutic_systems/`, and
-`TherapeuticReasoningKernel` accepts an optional `systems=` tuple. A new system,
-such as focusing, can register its own pattern relation, intervention mappings,
-exercises, modalities, and ranking bonus without changing the coordinator
-kernel.
+Therapeutic systems are modular. ACT, CBT, REBT, DBT, MBSR, Focusing,
+consultative facilitation, coaching focus, goal-direction, and cross-system
+loops live under `empath/therapeutic_systems/`, and
+`TherapeuticReasoningKernel` accepts an optional `systems=` tuple. A new system
+can register its own pattern relation, intervention mappings, exercises,
+modalities, and ranking bonus without changing the coordinator kernel.
 
 The DBT module currently targets:
 
@@ -106,22 +109,22 @@ The default loop system currently recognizes:
 - procrastination around a concrete valued action
 - high-distress gating
 
-Run the demo:
+Run the kernel demo:
 
 ```bash
-uv run python hello.py
+uv run empath-kernel-demo
 ```
 
 Run the DeepSeek-backed chat CLI:
 
 ```bash
-uv run python -m empath.chat
+uv run empath
 ```
 
 Run the API and SSE chat app:
 
 ```bash
-uv run python -m empath.api
+uv run empath-api
 ```
 
 Then open `http://127.0.0.1:8000`.
@@ -129,7 +132,7 @@ Then open `http://127.0.0.1:8000`.
 For local testing without DeepSeek calls:
 
 ```bash
-uv run python -m empath.api --dry-run
+uv run empath-api --dry-run
 ```
 
 Storage backend:
@@ -141,15 +144,15 @@ throwaway sessions or `--store-backend json --state-file ...` for the legacy
 JSON snapshot backend.
 
 ```bash
-uv run python -m empath.api --store-backend memory
-uv run python -m empath.api --store-backend json --state-file .empath_chat_state.json
-uv run python -m empath.api --store-backend surreal --surreal-url mem://
+uv run empath-api --store-backend memory
+uv run empath-api --store-backend json --state-file .empath_chat_state.json
+uv run empath-api --store-backend surreal --surreal-url mem://
 ```
 
 To point the default SurrealDB backend at a running SurrealDB service:
 
 ```bash
-uv run python -m empath.api \
+uv run empath-api \
   --store-backend surreal \
   --surreal-url ws://127.0.0.1:8000/rpc \
   --surreal-user root \
@@ -181,9 +184,18 @@ API surface:
 
 - `GET /`: browser chat app
 - `GET /api/health`: service metadata
+- `GET /api/workspaces`: list workspaces for the current user
+- `POST /api/workspaces`: create a workspace
+- `PATCH /api/workspaces`: rename a workspace
+- `DELETE /api/workspaces`: delete a workspace
+- `GET /api/conversations`: list conversations in a workspace
+- `POST /api/conversations`: create a conversation
+- `PATCH /api/conversations`: rename a conversation
+- `DELETE /api/conversations`: delete a conversation
 - `GET /api/chat/session?session_id=...`: visible multi-turn transcript
 - `GET /api/chat/explain?session_id=...&message_index=...`: lazy readable rationale for an assistant turn
 - `POST /api/chat`: one-shot JSON chat turn
+- `POST /api/chat/retry`: retry or edit-and-retry the latest user turn
 - `GET /api/chat/stream?session_id=...&message=...&trace=1`: SSE chat turn
 - `GET /api/formulation?session_id=...`: current working formulation graph
 - `GET /api/formulation/compaction?workspace_id=...`: database compaction policy summary
@@ -192,8 +204,9 @@ API surface:
 - `GET /api/experiments?session_id=...`: proposed coaching experiments and outcomes
 - `POST /api/experiments/feedback`: close the loop on one experiment
 
-The API keeps an in-memory transcript per `session_id`; the browser app stores
-the active session id in local storage and reloads the transcript when the page
+The API keeps workspace-scoped memory and conversation-scoped transcripts for
+the default user. The browser stores the active workspace and conversation ids
+in local storage and reloads both the transcript and Working Map when the page
 opens. Assistant messages expose a `Why this?` chip when a trace is available;
 the rationale is generated only after that chip is clicked. SSE chat turns emit
 a `formulation` event with the latest graph delta after the response plan is
@@ -205,12 +218,12 @@ graph playback.
 Useful CLI options:
 
 ```bash
-uv run python -m empath.chat --once "I keep avoiding the prototype because if it is bad, I am a failure."
-uv run python -m empath.chat --show-extraction --show-kernel --show-plan
-uv run python -m empath.chat --trace
-uv run python -m empath.chat --trace-prompts
-uv run python -m empath.chat --show-kernel
-uv run python -m empath.chat --dry-run --once "I should be able to handle this, but I keep putting it off."
+uv run empath --once "I keep avoiding the prototype because if it is bad, I am a failure."
+uv run empath --show-extraction --show-kernel --show-plan
+uv run empath --trace
+uv run empath --trace-prompts
+uv run empath --show-kernel
+uv run empath --dry-run --once "I should be able to handle this, but I keep putting it off."
 ```
 
 The CLI reads the DeepSeek API key from `.deepseek_api_key` by default and uses
@@ -231,10 +244,12 @@ Interactive debug commands:
 - `/debug`: toggle trace output after every turn
 - `/prompts`: toggle prompt inclusion inside traces
 
-Run tests:
+Run tests and checks:
 
 ```bash
-uv run python -m unittest
+uv run pytest -q
+uv run ruff check .
+uv run ruff format --check .
 ```
 
 Run the offline kernel eval suite:

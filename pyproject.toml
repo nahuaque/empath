@@ -7,10 +7,23 @@ requires-python = ">=3.13"
 dependencies = [
     "minikanren>=1.0.5",
     "pydantic-ai>=1.102.0",
-    "pytest>=9.0.3",
-    "ruff>=0.15.17",
     "sse-starlette>=3.4.4",
     "starlette>=1.1.0",
     "surrealdb>=2.0.0",
     "uvicorn>=0.38.0",
+]
+
+[project.scripts]
+empath = "empath.chat:main"
+empath-api = "empath.api:main"
+empath-kernel-demo = "empath.therapeutic_kernel:main"
+
+[build-system]
+requires = ["setuptools>=80.0"]
+build-backend = "setuptools.build_meta"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+    "ruff>=0.15.17",
 ]
