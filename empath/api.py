@@ -3843,6 +3843,8 @@ CHAT_APP_HTML = r"""<!doctype html>
       --soft: #eef4f0;
       --user: #e6f0ff;
       --coach: #ffffff;
+      --focus: rgba(22, 106, 91, 0.16);
+      --shadow-soft: 0 8px 24px rgba(20, 32, 28, 0.08);
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
     * { box-sizing: border-box; }
@@ -3866,8 +3868,7 @@ CHAT_APP_HTML = r"""<!doctype html>
     }
     main {
       display: grid;
-      grid-template-rows: auto auto auto;
-      align-content: start;
+      grid-template-rows: auto minmax(0, 1fr) auto;
       min-width: 0;
       min-height: 0;
       overflow: hidden;
@@ -3878,6 +3879,7 @@ CHAT_APP_HTML = r"""<!doctype html>
       display: flex;
       align-items: center;
       justify-content: space-between;
+      flex-wrap: wrap;
       gap: 16px;
       padding: 18px 22px;
       border-bottom: 1px solid var(--line);
@@ -3901,29 +3903,43 @@ CHAT_APP_HTML = r"""<!doctype html>
       white-space: nowrap;
     }
     .header-actions {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(260px, 1fr));
+      align-items: center;
+      gap: 8px 10px;
+      flex: 1 1 560px;
+      min-width: 0;
+    }
+    .scope-group {
       display: flex;
       align-items: center;
-      gap: 10px;
-      flex-wrap: wrap;
       justify-content: flex-end;
+      gap: 8px;
+      min-width: 0;
     }
     .scope-control {
       display: flex;
       align-items: center;
       gap: 7px;
+      flex: 1 1 auto;
+      min-width: 0;
       color: var(--muted);
       font-size: 12px;
       white-space: nowrap;
+    }
+    .scope-control span {
+      flex: 0 0 auto;
     }
     .scope-menu {
       display: flex;
       align-items: center;
       gap: 6px;
-      flex-wrap: wrap;
+      flex: 0 0 auto;
     }
     .workspace-select,
     .conversation-select {
-      width: 210px;
+      width: 100%;
+      min-width: 0;
       height: 34px;
       border: 1px solid var(--line);
       border-radius: 8px;
@@ -3934,9 +3950,6 @@ CHAT_APP_HTML = r"""<!doctype html>
       font-size: 13px;
       outline: none;
     }
-    .workspace-select {
-      width: 170px;
-    }
     .workspace-select:focus,
     .conversation-select:focus {
       border-color: var(--accent);
@@ -3945,8 +3958,8 @@ CHAT_APP_HTML = r"""<!doctype html>
     button.scope-button {
       width: auto;
       min-width: 0;
-      height: 34px;
-      padding: 0 10px;
+      height: 30px;
+      padding: 0 8px;
       font-size: 12px;
       font-weight: 720;
     }
@@ -3957,13 +3970,13 @@ CHAT_APP_HTML = r"""<!doctype html>
     }
     .messages {
       min-height: 0;
-      max-height: calc(100dvh - 170px);
       overflow-y: auto;
       padding: 22px;
       display: flex;
       flex-direction: column;
       gap: 14px;
       background: linear-gradient(#ffffff, #fbfcfa);
+      scroll-padding: 22px;
     }
     .message-wrap {
       max-width: min(760px, 86%);
@@ -3994,6 +4007,7 @@ CHAT_APP_HTML = r"""<!doctype html>
       white-space: pre-wrap;
       overflow-wrap: anywhere;
       font-size: 15px;
+      box-shadow: 0 2px 10px rgba(20, 32, 28, 0.04);
     }
     .message.user {
       align-self: flex-end;
@@ -4087,6 +4101,7 @@ CHAT_APP_HTML = r"""<!doctype html>
       flex-wrap: wrap;
       gap: 8px;
       align-items: center;
+      padding: 0 2px;
     }
     .message-wrap.user .message-actions {
       justify-content: flex-end;
@@ -4105,6 +4120,14 @@ CHAT_APP_HTML = r"""<!doctype html>
     }
     .why-chip:hover { background: #e4f2ed; }
     .why-chip:disabled { opacity: 0.7; }
+    .why-chip:focus-visible,
+    button:focus-visible,
+    select:focus-visible,
+    textarea:focus-visible,
+    input:focus-visible {
+      outline: 0;
+      box-shadow: 0 0 0 3px var(--focus);
+    }
     .experiment-chip {
       background: #ffffff;
     }
@@ -4203,24 +4226,26 @@ CHAT_APP_HTML = r"""<!doctype html>
       color: var(--muted);
     }
     .experiment-card {
-      width: min(680px, 100%);
+      width: min(700px, 100%);
       border: 1px solid #d0ddd7;
+      border-left: 3px solid var(--accent);
       border-radius: 8px;
       background: #fbfdfb;
-      padding: 12px;
+      padding: 14px;
       color: #26312d;
       font-size: 13px;
-      line-height: 1.4;
+      line-height: 1.45;
+      box-shadow: var(--shadow-soft);
     }
     .experiment-card[hidden] {
       display: none;
     }
     .experiment-head {
       display: flex;
-      align-items: center;
+      align-items: flex-start;
       justify-content: space-between;
       gap: 10px;
-      margin-bottom: 9px;
+      margin-bottom: 11px;
     }
     .experiment-title {
       font-size: 13px;
@@ -4238,13 +4263,26 @@ CHAT_APP_HTML = r"""<!doctype html>
       font-weight: 720;
       text-transform: uppercase;
     }
+    .experiment-status[data-status="helped"],
+    .experiment-status[data-status="completed"] {
+      border-color: #b7d6c9;
+      background: #eaf7f1;
+      color: #0f5c4d;
+    }
+    .experiment-status[data-status="did_not_help"],
+    .experiment-status[data-status="too_hard"],
+    .experiment-status[data-status="skipped"] {
+      border-color: #dec7b8;
+      background: #fff5ef;
+      color: #7b4b36;
+    }
     .experiment-rows {
       display: grid;
-      gap: 7px;
+      gap: 9px;
     }
     .experiment-row {
       display: grid;
-      grid-template-columns: 78px 1fr;
+      grid-template-columns: 86px 1fr;
       gap: 10px;
     }
     .experiment-label {
@@ -4263,9 +4301,9 @@ CHAT_APP_HTML = r"""<!doctype html>
     }
     .experiment-feedback-fields {
       display: grid;
-      gap: 8px;
-      margin-top: 10px;
-      padding-top: 10px;
+      gap: 10px;
+      margin-top: 12px;
+      padding-top: 12px;
       border-top: 1px solid #dbe7e1;
     }
     .experiment-feedback-inline {
@@ -4288,7 +4326,7 @@ CHAT_APP_HTML = r"""<!doctype html>
       width: 100%;
       border: 1px solid #cbdad4;
       border-radius: 8px;
-      padding: 7px 8px;
+      padding: 8px 9px;
       background: #ffffff;
       color: var(--ink);
       font: inherit;
@@ -4300,6 +4338,12 @@ CHAT_APP_HTML = r"""<!doctype html>
       margin-top: 10px;
       padding-top: 10px;
       border-top: 1px solid #dbe7e1;
+    }
+    .experiment-reviewed-note {
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
     }
     .experiment-actions {
       display: flex;
@@ -4345,7 +4389,7 @@ CHAT_APP_HTML = r"""<!doctype html>
     }
     textarea:focus {
       border-color: var(--accent);
-      box-shadow: 0 0 0 3px rgba(22, 106, 91, 0.12);
+      box-shadow: 0 0 0 3px var(--focus);
     }
     button {
       min-width: 86px;
@@ -4358,7 +4402,7 @@ CHAT_APP_HTML = r"""<!doctype html>
       font-weight: 650;
       cursor: pointer;
     }
-    button:hover { background: var(--accent-strong); }
+    button:hover:not(:disabled) { background: var(--accent-strong); }
     button:disabled {
       cursor: not-allowed;
       opacity: 0.55;
@@ -4377,7 +4421,7 @@ CHAT_APP_HTML = r"""<!doctype html>
       border: 1px solid #c9d8d2;
       border-radius: 8px;
       background: rgba(255, 255, 255, 0.96);
-      box-shadow: 0 8px 24px rgba(20, 32, 28, 0.1);
+      box-shadow: var(--shadow-soft);
       padding: 12px 14px;
       margin-top: -6px;
     }
@@ -4641,7 +4685,7 @@ CHAT_APP_HTML = r"""<!doctype html>
     }
     .policy-row {
       display: grid;
-      gap: 5px;
+      gap: 6px;
     }
     .policy-kind {
       color: #506579;
@@ -4651,18 +4695,17 @@ CHAT_APP_HTML = r"""<!doctype html>
       text-transform: uppercase;
     }
     .policy-chips {
-      display: flex;
-      flex-wrap: wrap;
+      display: grid;
       gap: 6px;
     }
     .policy-chip {
       border: 1px solid #bfd0df;
       border-radius: 8px;
       background: #ffffff;
-      padding: 5px 7px;
+      padding: 7px 8px;
       color: #1f2f3c;
       font-size: 12px;
-      line-height: 1.25;
+      line-height: 1.35;
       overflow-wrap: anywhere;
     }
     .map-items {
@@ -4731,14 +4774,36 @@ CHAT_APP_HTML = r"""<!doctype html>
       }
       main { border-right: 0; min-height: 70vh; }
       aside { min-height: 30vh; border-top: 1px solid var(--line); }
-      .messages { max-height: calc(70dvh - 170px); }
+      header {
+        align-items: flex-start;
+        gap: 10px;
+        padding: 12px 14px;
+      }
+      .header-actions {
+        width: 100%;
+        grid-template-columns: 1fr;
+        flex-basis: 100%;
+        gap: 6px;
+      }
+      .scope-group {
+        justify-content: flex-start;
+        gap: 6px;
+      }
+      .scope-control { flex: 1 1 190px; }
       .message-wrap { max-width: 94%; }
-      .composer { grid-template-columns: 1fr; }
-      button { width: 100%; }
+      .messages { padding: 16px; }
+      .composer {
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 8px;
+        padding: 12px 14px;
+      }
+      textarea {
+        min-height: 48px;
+        max-height: 120px;
+      }
+      #send { height: 48px; }
       button.icon-button { width: 38px; }
       button.scope-button { width: auto; }
-      .workspace-select { width: 150px; }
-      .conversation-select { width: 180px; }
       .why-chip { width: auto; }
       button.experiment-action { width: auto; }
       .progress-toast { width: 94%; }
@@ -4756,23 +4821,27 @@ CHAT_APP_HTML = r"""<!doctype html>
           <div class="status" id="status">Ready</div>
         </div>
         <div class="header-actions">
-          <label class="scope-control" for="workspaceSelect">
-            <span>Workspace</span>
-            <select class="workspace-select" id="workspaceSelect"></select>
-          </label>
-          <div class="scope-menu" aria-label="Workspace actions">
-            <button class="scope-button" id="newWorkspace" type="button">New</button>
-            <button class="scope-button" id="renameWorkspace" type="button">Rename</button>
-            <button class="scope-button danger" id="deleteWorkspace" type="button">Delete</button>
+          <div class="scope-group">
+            <label class="scope-control" for="workspaceSelect">
+              <span>Workspace</span>
+              <select class="workspace-select" id="workspaceSelect"></select>
+            </label>
+            <div class="scope-menu" aria-label="Workspace actions">
+              <button class="scope-button" id="newWorkspace" type="button">New</button>
+              <button class="scope-button" id="renameWorkspace" type="button">Rename</button>
+              <button class="scope-button danger" id="deleteWorkspace" type="button">Delete</button>
+            </div>
           </div>
-          <label class="scope-control" for="conversationSelect">
-            <span>Conversation</span>
-            <select class="conversation-select" id="conversationSelect"></select>
-          </label>
-          <div class="scope-menu" aria-label="Conversation actions">
-            <button class="scope-button" id="newChat" type="button">New</button>
-            <button class="scope-button" id="renameChat" type="button">Rename</button>
-            <button class="scope-button danger" id="deleteChat" type="button">Delete</button>
+          <div class="scope-group">
+            <label class="scope-control" for="conversationSelect">
+              <span>Conversation</span>
+              <select class="conversation-select" id="conversationSelect"></select>
+            </label>
+            <div class="scope-menu" aria-label="Conversation actions">
+              <button class="scope-button" id="newChat" type="button">New</button>
+              <button class="scope-button" id="renameChat" type="button">Rename</button>
+              <button class="scope-button danger" id="deleteChat" type="button">Delete</button>
+            </div>
           </div>
         </div>
       </header>
@@ -5478,6 +5547,7 @@ CHAT_APP_HTML = r"""<!doctype html>
       title.textContent = experiment.title || "Tiny experiment";
       const status = document.createElement("span");
       status.className = "experiment-status";
+      status.dataset.status = experiment.outcome || experiment.status || "proposed";
       status.textContent = experiment.outcome
         ? humanizeMapLabel(experiment.outcome)
         : humanizeMapLabel(experiment.status || "proposed");
@@ -5504,18 +5574,21 @@ CHAT_APP_HTML = r"""<!doctype html>
       if (disabled) {
         const outcomeSummary = renderExperimentOutcomeSummary(experiment);
         if (outcomeSummary) card.appendChild(outcomeSummary);
+        const note = document.createElement("div");
+        note.className = "experiment-reviewed-note";
+        note.textContent = "Feedback recorded.";
+        card.appendChild(note);
       } else {
         card.appendChild(renderExperimentOutcomeFields(experiment));
+        const actions = document.createElement("div");
+        actions.className = "experiment-actions";
+        actions.appendChild(experimentActionButton("Done", "completed"));
+        actions.appendChild(experimentActionButton("Helped", "helped"));
+        actions.appendChild(experimentActionButton("Did not help", "did_not_help"));
+        actions.appendChild(experimentActionButton("Too hard", "too_hard"));
+        actions.appendChild(experimentActionButton("Skipped", "skipped"));
+        card.appendChild(actions);
       }
-
-      const actions = document.createElement("div");
-      actions.className = "experiment-actions";
-      actions.appendChild(experimentActionButton("Done", "completed", disabled));
-      actions.appendChild(experimentActionButton("Helped", "helped", disabled));
-      actions.appendChild(experimentActionButton("Did not help", "did_not_help", disabled));
-      actions.appendChild(experimentActionButton("Too hard", "too_hard", disabled));
-      actions.appendChild(experimentActionButton("Skipped", "skipped", disabled));
-      card.appendChild(actions);
       return card;
     }
 
@@ -5539,13 +5612,13 @@ CHAT_APP_HTML = r"""<!doctype html>
 
       const inline = document.createElement("div");
       inline.className = "experiment-feedback-inline";
-      inline.appendChild(experimentInputField("Usefulness", "usefulness", "number", experiment.usefulness, "0-10", 0, 10));
-      inline.appendChild(experimentInputField("Friction before", "friction_before", "number", experiment.friction_before, "0-10", 0, 10));
-      inline.appendChild(experimentInputField("Friction after", "friction_after", "number", experiment.friction_after, "0-10", 0, 10));
+      inline.appendChild(experimentInputField(experiment.id, "Usefulness", "usefulness", "number", experiment.usefulness, "0-10", 0, 10));
+      inline.appendChild(experimentInputField(experiment.id, "Friction before", "friction_before", "number", experiment.friction_before, "0-10", 0, 10));
+      inline.appendChild(experimentInputField(experiment.id, "Friction after", "friction_after", "number", experiment.friction_after, "0-10", 0, 10));
       panel.appendChild(inline);
 
-      panel.appendChild(experimentInputField("What happened", "action_taken", "text", experiment.action_taken, "e.g. opened the draft for 8 minutes"));
-      panel.appendChild(experimentInputField("Emotional shift", "emotional_shift", "text", experiment.emotional_shift, "e.g. less stuck, still anxious"));
+      panel.appendChild(experimentInputField(experiment.id, "What happened", "action_taken", "text", experiment.action_taken, "e.g. opened the draft for 8 minutes"));
+      panel.appendChild(experimentInputField(experiment.id, "Emotional shift", "emotional_shift", "text", experiment.emotional_shift, "e.g. less stuck, still anxious"));
       return panel;
     }
 
@@ -5569,12 +5642,15 @@ CHAT_APP_HTML = r"""<!doctype html>
       return panel;
     }
 
-    function experimentInputField(label, name, type, value, placeholder, min = null, max = null) {
+    function experimentInputField(experimentId, label, name, type, value, placeholder, min = null, max = null) {
       const field = document.createElement("div");
       field.className = "experiment-field";
       const labelNode = document.createElement("label");
+      const inputId = `${experimentId}-${name}`.replace(/[^a-zA-Z0-9_-]/g, "-");
+      labelNode.htmlFor = inputId;
       labelNode.textContent = label;
       const input = document.createElement("input");
+      input.id = inputId;
       input.type = type;
       input.dataset.experimentField = name;
       input.placeholder = placeholder || "";
@@ -5592,13 +5668,12 @@ CHAT_APP_HTML = r"""<!doctype html>
       return field;
     }
 
-    function experimentActionButton(label, action, disabled) {
+    function experimentActionButton(label, action) {
       const button = document.createElement("button");
       button.className = "experiment-action";
       button.type = "button";
       button.dataset.experimentAction = action;
       button.textContent = label;
-      button.disabled = Boolean(disabled);
       return button;
     }
 
