@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 import json
+import os
 from pathlib import Path
 import re
 import sys
@@ -26,6 +27,8 @@ from .therapeutic_kernel import (
 
 
 DEFAULT_MODEL = "deepseek-v4-flash"
+DEFAULT_API_KEY_ENV_VAR = "DEEPSEEK_API_KEY"
+DEFAULT_ENV_FILE = ".env"
 DEFAULT_API_KEY_FILE = ".deepseek_api_key"
 DEFAULT_AGENT_RETRY_ATTEMPTS = 3
 DEFAULT_AGENT_RETRY_BACKOFF_SECONDS = 0.35
@@ -1018,15 +1021,74 @@ def _looks_like_framework_explanation_request(message: str) -> bool:
     )
 
 
-def read_api_key(path: Path) -> str:
+def read_api_key(
+    path: Path | None = None,
+    *,
+    env_file: Path | None = None,
+    env_var: str = DEFAULT_API_KEY_ENV_VAR,
+) -> str:
+    env_value = os.environ.get(env_var)
+    if env_value is not None:
+        key = env_value.strip()
+        if key:
+            return key
+        raise RuntimeError(f"{env_var} is set but empty.")
+
+    dotenv_path = env_file or Path(DEFAULT_ENV_FILE)
+    dotenv_values = _read_dotenv(dotenv_path)
+    if env_var in dotenv_values:
+        key = dotenv_values[env_var].strip()
+        if key:
+            return key
+        raise RuntimeError(f"{env_var} is empty in {dotenv_path}.")
+
+    key_path = path or Path(DEFAULT_API_KEY_FILE)
     try:
-        key = path.read_text(encoding="utf-8").strip()
+        key = key_path.read_text(encoding="utf-8").strip()
     except FileNotFoundError as exc:
-        raise RuntimeError(f"DeepSeek API key file not found: {path}") from exc
+        raise RuntimeError(
+            f"DeepSeek API key not found. Set {env_var}, add {env_var}=... "
+            f"to {dotenv_path}, or create legacy key file {key_path}."
+        ) from exc
 
     if not key:
-        raise RuntimeError(f"DeepSeek API key file is empty: {path}")
+        raise RuntimeError(f"DeepSeek API key file is empty: {key_path}")
     return key
+
+
+def _read_dotenv(path: Path) -> dict[str, str]:
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        return {}
+
+    values: dict[str, str] = {}
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if stripped.startswith("export "):
+            stripped = stripped[7:].lstrip()
+        if "=" not in stripped:
+            continue
+        name, raw_value = stripped.split("=", 1)
+        name = name.strip()
+        if not name:
+            continue
+        values[name] = _clean_dotenv_value(raw_value)
+    return values
+
+
+def _clean_dotenv_value(value: str) -> str:
+    cleaned = value.strip()
+    if cleaned and cleaned[0] in {"'", '"'}:
+        quote = cleaned[0]
+        end_quote = cleaned.find(quote, 1)
+        if end_quote >= 0:
+            return cleaned[1:end_quote]
+    if " #" in cleaned:
+        cleaned = cleaned.split(" #", 1)[0].rstrip()
+    return cleaned
 
 
 def state_from_extraction(
@@ -2488,7 +2550,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--api-key-file",
         default=DEFAULT_API_KEY_FILE,
-        help=f"Path to the DeepSeek API key file. Default: {DEFAULT_API_KEY_FILE}",
+        help=(
+            f"Legacy DeepSeek API key file fallback. Empath first reads "
+            f"{DEFAULT_API_KEY_ENV_VAR} from the environment or {DEFAULT_ENV_FILE}. "
+            f"Default: {DEFAULT_API_KEY_FILE}"
+        ),
     )
     parser.add_argument(
         "--model",

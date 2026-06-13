@@ -24,6 +24,8 @@ from starlette.routing import Route
 
 from .chat import (
     DEFAULT_API_KEY_FILE,
+    DEFAULT_API_KEY_ENV_VAR,
+    DEFAULT_ENV_FILE,
     DEFAULT_MODEL,
     ChatTurnResult,
     CounterfactualIntervention,
@@ -3750,7 +3752,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--api-key-file",
         default=DEFAULT_API_KEY_FILE,
-        help=f"Path to the DeepSeek API key file. Default: {DEFAULT_API_KEY_FILE}",
+        help=(
+            f"Legacy DeepSeek API key file fallback. Empath first reads "
+            f"{DEFAULT_API_KEY_ENV_VAR} from the environment or {DEFAULT_ENV_FILE}. "
+            f"Default: {DEFAULT_API_KEY_FILE}"
+        ),
     )
     parser.add_argument(
         "--model",

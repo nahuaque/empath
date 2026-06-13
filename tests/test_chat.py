@@ -1,9 +1,11 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from empath.chat import (
+    DEFAULT_API_KEY_ENV_VAR,
     DEFAULT_MODEL,
     EXTRACTION_INSTRUCTIONS,
     DeterministicKernelGuidedCoach,
@@ -70,8 +72,38 @@ class ChatWorkflowTests(unittest.TestCase):
     def test_read_api_key_strips_whitespace(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "key"
+            env_file = Path(tmp) / ".env"
             path.write_text("  secret-key\n", encoding="utf-8")
-            self.assertEqual("secret-key", read_api_key(path))
+            with patch.dict(os.environ, {}, clear=True):
+                self.assertEqual("secret-key", read_api_key(path, env_file=env_file))
+
+    def test_read_api_key_prefers_environment_variable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "key"
+            env_file = Path(tmp) / ".env"
+            path.write_text("legacy-key", encoding="utf-8")
+            env_file.write_text(
+                f"{DEFAULT_API_KEY_ENV_VAR}=dotenv-key\n",
+                encoding="utf-8",
+            )
+            with patch.dict(
+                os.environ,
+                {DEFAULT_API_KEY_ENV_VAR: "  env-key\n"},
+                clear=True,
+            ):
+                self.assertEqual("env-key", read_api_key(path, env_file=env_file))
+
+    def test_read_api_key_reads_dotenv_before_legacy_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "key"
+            env_file = Path(tmp) / ".env"
+            path.write_text("legacy-key", encoding="utf-8")
+            env_file.write_text(
+                f"export {DEFAULT_API_KEY_ENV_VAR}='dotenv-key' # local secret\n",
+                encoding="utf-8",
+            )
+            with patch.dict(os.environ, {}, clear=True):
+                self.assertEqual("dotenv-key", read_api_key(path, env_file=env_file))
 
     def test_message_preparation_feeds_kernel(self):
         kernel = TherapeuticReasoningKernel()

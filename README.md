@@ -226,8 +226,15 @@ uv run empath --show-kernel
 uv run empath --dry-run --once "I should be able to handle this, but I keep putting it off."
 ```
 
-The CLI reads the DeepSeek API key from `.deepseek_api_key` by default and uses
-the DeepSeek model id `deepseek-v4-flash`.
+The CLI and API read the DeepSeek API key from `DEEPSEEK_API_KEY`, then from
+`.env`, then from the legacy `.deepseek_api_key` file. For local development,
+copy `.env.example` to `.env` and set:
+
+```bash
+DEEPSEEK_API_KEY=...
+```
+
+The default DeepSeek model id is `deepseek-v4-flash`.
 
 The live chat path now makes two Pydantic AI calls per user turn:
 
