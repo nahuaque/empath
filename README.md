@@ -1,257 +1,116 @@
-## Empath therapeutic reasoning kernel
+# Empath
 
-This repository contains a small Python miniKanren kernel and chat surface for
-coaching-oriented ACT/CBT/REBT/DBT/MBSR/Focusing reasoning, with a neutral
-consultative facilitation fallback for non-coaching questions. It is intended
-to produce inspectable coaching hypotheses and intervention candidates, not
-diagnoses.
+Empath is an experimental coaching chat app with a symbolic reasoning layer.
+It combines an LLM with a miniKanren therapeutic reasoning kernel so responses
+can be shaped by inspectable hypotheses, working-map memory, and small
+coaching experiments.
 
-```python
-from empath import CoachingState, TherapeuticReasoningKernel
+Empath is not a diagnostic or clinical tool. It is intended for coaching,
+reflection, emotional support, and structured problem solving.
 
-kernel = TherapeuticReasoningKernel()
-kernel.add_state(
-    CoachingState(
-        state_id="prototype",
-        thoughts=("If it is bad, it proves I am not cut out for this.",),
-        emotions=("anxiety", "shame"),
-        behaviors=("avoidance",),
-        values=("mastery", "autonomy"),
-    )
-)
+## What It Does
 
-print(kernel.hypotheses_for("prototype"))
-print(kernel.ranked_interventions("prototype", limit=3))
-print(kernel.states_for_intervention("cognitive_defusion"))
-```
+- Runs a browser chat app with streaming responses.
+- Tracks workspace-scoped context in a Working Map.
+- Lets one user manage multiple workspaces and conversations.
+- Explains why an intervention was chosen only when you click `Why this?`.
+- Supports reflective listening, tiny experiments, and trace/debug inspection.
+- Uses ACT, CBT, REBT, DBT, MBSR, Focusing, goal-direction, and consultative
+  facilitation lenses as tentative reasoning systems.
 
-Relational queries can also run "backwards" over known states:
+For implementation details, see [docs/technical-reference.md](docs/technical-reference.md).
 
-```python
-print(kernel.patterns_for_intervention("cognitive_defusion"))
-print(kernel.states_for_pattern("fusion", source="act"))
-print(kernel.safe_states_for_intervention("rebt_disputation"))
-print(kernel.contraindicated_states_for_intervention("rebt_disputation"))
-print(kernel.compare_intervention_across_states("rebt_disputation"))
-```
+## Requirements
 
-Architecture:
+- Python 3.13
+- [uv](https://docs.astral.sh/uv/)
+- A DeepSeek API key for live model calls
 
-```text
-structured observations -> miniKanren hypotheses -> safe candidates -> ranking
-```
+## Setup
 
-The chat app also keeps a longitudinal working formulation per workspace:
-
-```text
-turn extraction + kernel hypotheses + chosen intervention -> formulation graph
-```
-
-The graph stores tentative observations, hypotheses, interventions, tasks,
-objectives, and relationships with turn provenance. A user can have multiple
-workspaces, and each workspace can have multiple conversations. The Working Map
-is workspace-scoped and can be enriched by any active conversation in that
-workspace. The browser exposes this map beside the trace inspector, and each
-node can be marked as fitting, not quite, or removed.
-
-Each assistant turn also proposes a tiny N-of-1 coaching experiment. The
-experiment layer takes the selected intervention, supporting hypotheses, and
-working-map delta, then turns them into a small action, prediction, measure,
-and timebox. The browser shows the experiment under the assistant turn and lets
-the user mark whether it helped, did not help, was too hard, or was skipped.
-
-The relational layer answers questions like:
-
-- what CBT/REBT/ACT/DBT patterns may be present?
-- what broader coaching focus is active?
-- what interventions are logically coherent for this state?
-- what known states would justify a given intervention?
-- which candidates are contraindicated before validation or safety handling?
-
-Therapeutic systems are modular. ACT, CBT, REBT, DBT, MBSR, Focusing,
-consultative facilitation, coaching focus, goal-direction, and cross-system
-loops live under `empath/therapeutic_systems/`, and
-`TherapeuticReasoningKernel` accepts an optional `systems=` tuple. A new system
-can register its own pattern relation, intervention mappings, exercises,
-modalities, and ranking bonus without changing the coordinator kernel.
-
-The DBT module currently targets:
-
-- mindfulness / observe-and-describe
-- distress tolerance / crisis-survival pause
-- emotion regulation / check-the-facts style mapping
-- interpersonal effectiveness / ask-or-boundary scripting
-- self-validation when the user appears to invalidate their own feeling
-
-The coaching focus module maps observations into 12 broader focus areas:
-
-- values, purpose, and direction
-- goal setting and behavioral activation
-- motivation, willingness, and persistence
-- cognitive patterns and belief change
-- emotional regulation and distress tolerance
-- avoidance, procrastination, and experiential escape
-- self-concept, confidence, and self-efficacy
-- decision-making and problem solving
-- interpersonal effectiveness and boundaries
-- attention, focus, and environment design
-- resilience, relapse prevention, and recovery
-- integration and review
-
-These focus moves use a low ranking bonus so they enrich traces and the Working
-Map without displacing more specific ACT/CBT/REBT/DBT interventions.
-
-The default loop system currently recognizes:
-
-- avoidance plus identity threat
-- sadness/anxiety minimal disclosure
-- shame/self-worth fusion
-- procrastination around a concrete valued action
-- high-distress gating
-
-Run the kernel demo:
+Clone the repo and install dependencies:
 
 ```bash
-uv run empath-kernel-demo
+uv sync
 ```
 
-Run the DeepSeek-backed chat CLI:
+Create a local `.env` file:
 
 ```bash
-uv run empath
+cp .env.example .env
 ```
 
-Run the API and SSE chat app:
+Then edit `.env`:
+
+```bash
+DEEPSEEK_API_KEY=your_key_here
+```
+
+Empath also still supports `DEEPSEEK_API_KEY` from the process environment and
+the legacy `.deepseek_api_key` file.
+
+## Run The Chat App
+
+Start the API and browser chat app:
 
 ```bash
 uv run empath-api
 ```
 
-Then open `http://127.0.0.1:8000`.
+Open:
 
-For local testing without DeepSeek calls:
-
-```bash
-uv run empath-api --dry-run
+```text
+http://127.0.0.1:8000
 ```
 
-Storage backend:
+For a no-network local smoke test:
 
-The API keeps hot workspace objects in memory and persists a serialized
-workspace snapshot through a pluggable backend. The default CLI path uses a
-local SurrealDB file at `.empath_surreal.db`; pass `--store-backend memory` for
-throwaway sessions or `--store-backend json --state-file ...` for the legacy
-JSON snapshot backend.
+```bash
+uv run empath-api --dry-run --store-backend memory
+```
+
+## Run The CLI
+
+Interactive chat:
+
+```bash
+uv run empath
+```
+
+One-shot prompt:
+
+```bash
+uv run empath --once "I keep avoiding the investor update."
+```
+
+Dry-run the kernel-guided prompt path without calling DeepSeek:
+
+```bash
+uv run empath --dry-run --once "I'm sad today."
+```
+
+## Run The Kernel Demo
+
+```bash
+uv run empath-kernel-demo
+```
+
+## Storage
+
+By default, the API persists local state through a SurrealDB-backed local file
+at `.empath_surreal.db`. For throwaway sessions, use:
 
 ```bash
 uv run empath-api --store-backend memory
+```
+
+For the legacy JSON snapshot backend:
+
+```bash
 uv run empath-api --store-backend json --state-file .empath_chat_state.json
-uv run empath-api --store-backend surreal --surreal-url mem://
 ```
 
-To point the default SurrealDB backend at a running SurrealDB service:
-
-```bash
-uv run empath-api \
-  --store-backend surreal \
-  --surreal-url ws://127.0.0.1:8000/rpc \
-  --surreal-user root \
-  --surreal-password root
-```
-
-The SurrealDB backend keeps the full app snapshot as a recovery record and also
-projects queryable records into:
-
-- `empath_user`
-- `empath_workspace`
-- `empath_conversation`
-- `empath_message`
-- `working_node`
-- `working_edge`
-- `working_node_provenance`
-- `working_edge_provenance`
-- `coaching_experiment`
-- `working_compaction_policy`
-
-The projection is rebuilt on each snapshot save, so query results stay aligned
-with the current workspace state while the Python snapshot remains the source
-of truth for app restoration. `working_node` and `working_edge` records include
-database-visible compaction fields such as `active_in_map`,
-`hidden_by_policy`, `protected_by_policy`, `compaction_reason`,
-`retention_action`, `age`, and `priority_score`.
-
-API surface:
-
-- `GET /`: browser chat app
-- `GET /api/health`: service metadata
-- `GET /api/workspaces`: list workspaces for the current user
-- `POST /api/workspaces`: create a workspace
-- `PATCH /api/workspaces`: rename a workspace
-- `DELETE /api/workspaces`: delete a workspace
-- `GET /api/conversations`: list conversations in a workspace
-- `POST /api/conversations`: create a conversation
-- `PATCH /api/conversations`: rename a conversation
-- `DELETE /api/conversations`: delete a conversation
-- `GET /api/chat/session?session_id=...`: visible multi-turn transcript
-- `GET /api/chat/explain?session_id=...&message_index=...`: lazy readable rationale for an assistant turn
-- `POST /api/chat`: one-shot JSON chat turn
-- `POST /api/chat/retry`: retry or edit-and-retry the latest user turn
-- `GET /api/chat/stream?session_id=...&message=...&trace=1`: SSE chat turn
-- `GET /api/formulation?session_id=...`: current working formulation graph
-- `GET /api/formulation/compaction?workspace_id=...`: database compaction policy summary
-- `GET /api/formulation/mirror?session_id=...`: reflective playback of the working formulation
-- `POST /api/formulation/feedback`: confirm, reject, or remove a formulation node
-- `GET /api/experiments?session_id=...`: proposed coaching experiments and outcomes
-- `POST /api/experiments/feedback`: close the loop on one experiment
-
-The API keeps workspace-scoped memory and conversation-scoped transcripts for
-the default user. The browser stores the active workspace and conversation ids
-in local storage and reloads both the transcript and Working Map when the page
-opens. Assistant messages expose a `Why this?` chip when a trace is available;
-the rationale is generated only after that chip is clicked. SSE chat turns emit
-a `formulation` event with the latest graph delta after the response plan is
-selected and an `experiment` event with the proposed learning-loop action. The
-Working Map can also be mirrored back using reflective listening; live mode
-uses the model to verbalize the graph, while dry-run mode uses the deterministic
-graph playback.
-
-Useful CLI options:
-
-```bash
-uv run empath --once "I keep avoiding the prototype because if it is bad, I am a failure."
-uv run empath --show-extraction --show-kernel --show-plan
-uv run empath --trace
-uv run empath --trace-prompts
-uv run empath --show-kernel
-uv run empath --dry-run --once "I should be able to handle this, but I keep putting it off."
-```
-
-The CLI and API read the DeepSeek API key from `DEEPSEEK_API_KEY`, then from
-`.env`, then from the legacy `.deepseek_api_key` file. For local development,
-copy `.env.example` to `.env` and set:
-
-```bash
-DEEPSEEK_API_KEY=...
-```
-
-The default DeepSeek model id is `deepseek-v4-flash`.
-
-The live chat path now makes two Pydantic AI calls per user turn:
-
-```text
-user message -> structured extraction agent -> miniKanren kernel -> structured response-plan agent -> renderer
-```
-
-`--dry-run` does not call DeepSeek. It uses the deterministic fallback extractor
-only to preview the prompt shape and kernel output.
-
-Interactive debug commands:
-
-- `/trace`: print the previous turn's full trace
-- `/debug`: toggle trace output after every turn
-- `/prompts`: toggle prompt inclusion inside traces
-
-Run tests and checks:
+## Development Checks
 
 ```bash
 uv run pytest -q
@@ -259,12 +118,8 @@ uv run ruff check .
 uv run ruff format --check .
 ```
 
-Run the offline kernel eval suite:
+Build the package:
 
 ```bash
-uv run python -m empath.evals
+uv build
 ```
-
-The eval suite currently contains 37 fixtures. Each fixture can assert expected
-hypotheses, forbidden hypotheses, contraindicated-but-coherent interventions,
-and acceptable top-ranked candidates.
